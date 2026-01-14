@@ -1,0 +1,29 @@
+{
+  "name": "outlook-gcal-mirror",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "outlook-gcal-mirror": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node ./src/cli.js",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "node -c ./src/cli.js && node -c ./src/**/*.js"
+  },
+  "dependencies": {
+    "commander": "^14.0.2"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.0.16",
+    "vitest": "^4.0.16"
+  },
+  "optionalDependencies": {
+    "googleapis": "^157.0.0"
+  }
+}
