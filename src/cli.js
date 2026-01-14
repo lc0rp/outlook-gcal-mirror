@@ -142,21 +142,32 @@ function buildProgram() {
 		.option("--target-url <url>", "If no suitable tab exists, open this URL", DEFAULT_TARGET_URL)
 		.option("--duration-ms <ms>", "How long to observe network", "60000")
 		.option("--min-score <n>", "Minimum JSON key score", "3")
+		.option(
+			"--url-includes <substr>",
+			"Only consider responses whose URL contains this substring",
+			"outlook.office.com"
+		)
+		.option("--no-url-filter", "Do not filter responses by URL")
 		.action(async (opts) => {
 			const cdpPort = validateCdpPort(opts.cdpPort);
 			const engine = parseEngine(opts.engine);
 			const targetUrl = validateAbsoluteUrl(opts.targetUrl);
 			const durationMs = parsePositiveInt(opts.durationMs, "--duration-ms") ?? 60000;
 			const minScore = parsePositiveInt(opts.minScore, "--min-score") ?? 3;
+			const urlIncludes = opts.urlFilter === false ? null : String(opts.urlIncludes ?? "outlook.office.com");
 
 			console.info("Connects via CDP. While this runs: click calendar items / navigate weeks to generate JSON responses.");
 
 			const conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
 			try {
+				const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
+				console.info(`Using tab: ${pageUrl}`);
+
 				const candidates = await discoverOwaCandidates({
 					page: conn.page,
 					durationMs,
 					minScore,
+					urlIncludes,
 				});
 
 				if (!candidates.length) {
@@ -183,18 +194,28 @@ function buildProgram() {
 		.option("--engine <engine>", "playwright|puppeteer", "playwright")
 		.option("--target-url <url>", "If no suitable tab exists, open this URL", DEFAULT_TARGET_URL)
 		.option("--duration-ms <ms>", "Capture duration", "15000")
+		.option(
+			"--url-includes <substr>",
+			"Only consider responses whose URL contains this substring",
+			"outlook.office.com"
+		)
+		.option("--no-url-filter", "Do not filter responses by URL")
 		.option("--json", "Print events as JSON")
 		.action(async (opts) => {
 			const cdpPort = validateCdpPort(opts.cdpPort);
 			const engine = parseEngine(opts.engine);
 			const targetUrl = validateAbsoluteUrl(opts.targetUrl);
 			const durationMs = parsePositiveInt(opts.durationMs, "--duration-ms") ?? 15000;
+			const urlIncludes = opts.urlFilter === false ? null : String(opts.urlIncludes ?? "outlook.office.com");
 
 			console.info("Capturing JSON responses. Tip: open week view and click events while capturing.");
 
 			const conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
 			try {
-				const events = await captureOwaEvents({ page: conn.page, durationMs });
+				const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
+				console.info(`Using tab: ${pageUrl}`);
+
+				const events = await captureOwaEvents({ page: conn.page, durationMs, urlIncludes });
 				if (opts.json) {
 					console.info(JSON.stringify(events, null, 2));
 					return;
@@ -217,6 +238,12 @@ function buildProgram() {
 		.option("--engine <engine>", "playwright|puppeteer (overrides config)")
 		.option("--target-url <url>", "OWA calendar URL (overrides config)")
 		.option("--capture-ms <ms>", "How long to capture OWA JSON", "15000")
+		.option(
+			"--url-includes <substr>",
+			"Only consider responses whose URL contains this substring",
+			"outlook.office.com"
+		)
+		.option("--no-url-filter", "Do not filter responses by URL")
 		.option("--google-credentials <path>", "Google OAuth credentials JSON (overrides config)")
 		.option("--google-token <path>", "Google token JSON path (overrides config)")
 		.option("--calendar-name <name>", "Destination Google calendar (overrides config)")
@@ -239,6 +266,7 @@ function buildProgram() {
 			const targetUrl = validateAbsoluteUrl(opts.targetUrl ?? cfg?.outlook?.targetUrl ?? DEFAULT_TARGET_URL);
 
 			const captureMs = parsePositiveInt(opts.captureMs, "--capture-ms") ?? 15000;
+			const urlIncludes = opts.urlFilter === false ? null : String(opts.urlIncludes ?? "outlook.office.com");
 			const windowDays =
 				parsePositiveInt(opts.windowDays ?? cfg?.sync?.windowDays, "--window-days") ?? 14;
 			const lookbackDays = parsePositiveInt(opts.lookbackDays, "--lookback-days") ?? 1;
@@ -263,7 +291,10 @@ function buildProgram() {
 
 			const conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
 			try {
-				let events = await captureOwaEvents({ page: conn.page, durationMs: captureMs });
+				const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
+				console.info(`Using tab: ${pageUrl}`);
+
+				let events = await captureOwaEvents({ page: conn.page, durationMs: captureMs, urlIncludes });
 				if (cfg?.outlook) {
 					events = events.filter((ev) =>
 						shouldSyncEvent(ev, {

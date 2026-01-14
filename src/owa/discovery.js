@@ -76,20 +76,17 @@ function redactHeaders(headers) {
  * Observe network activity and print candidate JSON endpoints.
  * Works for both Playwright and Puppeteer pages (duck-typed).
  *
- * @param {{ page: any, durationMs: number, minScore?: number, includeHeaders?: boolean }} opts
+ * @param {{ page: any, durationMs: number, minScore?: number, urlIncludes?: string | null }} opts
  */
-export async function discoverOwaCandidates({ page, durationMs, minScore = 3, includeHeaders = false }) {
+export async function discoverOwaCandidates({ page, durationMs, minScore = 3, urlIncludes = "outlook.office.com" }) {
 	/** @type {OwaCandidate[]} */
 	const candidates = [];
 
 	const onResponse = async (response) => {
 		try {
 			const url = typeof response.url === "function" ? response.url() : response.url;
-			if (!url || !String(url).includes("outlook.office.com")) return;
-
-			const headers = typeof response.headers === "function" ? await response.headers() : response.headers;
-			const ct = headers?.["content-type"] ?? headers?.["Content-Type"];
-			if (!ct || !String(ct).includes("application/json")) return;
+			if (!url) return;
+			if (urlIncludes && !String(url).includes(urlIncludes)) return;
 
 			const json = typeof response.json === "function" ? await response.json() : null;
 			const { score, keys } = scoreOwaJson(json);
@@ -109,7 +106,6 @@ export async function discoverOwaCandidates({ page, durationMs, minScore = 3, in
 	};
 
 	page.on("response", onResponse);
-
 	await new Promise((r) => setTimeout(r, durationMs));
 
 	try {

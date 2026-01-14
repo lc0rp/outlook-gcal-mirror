@@ -3,7 +3,7 @@ import { extractOutlookEventsFromJson } from "./extract.js";
 /**
  * Capture and parse OWA JSON responses for a short window.
  *
- * @param {{ page: any, durationMs: number, urlIncludes?: string }} opts
+ * @param {{ page: any, durationMs: number, urlIncludes?: string | null }} opts
  */
 export async function captureOwaEvents({ page, durationMs, urlIncludes = "outlook.office.com" }) {
 	/** @type {any[]} */
@@ -12,11 +12,8 @@ export async function captureOwaEvents({ page, durationMs, urlIncludes = "outloo
 	const onResponse = async (response) => {
 		try {
 			const url = typeof response.url === "function" ? response.url() : response.url;
-			if (!url || !String(url).includes(urlIncludes)) return;
-
-			const headers = typeof response.headers === "function" ? await response.headers() : response.headers;
-			const ct = headers?.["content-type"] ?? headers?.["Content-Type"];
-			if (!ct || !String(ct).includes("application/json")) return;
+			if (!url) return;
+			if (urlIncludes && !String(url).includes(urlIncludes)) return;
 
 			const json = typeof response.json === "function" ? await response.json() : null;
 			if (!json) return;

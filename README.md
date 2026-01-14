@@ -56,6 +56,12 @@ In another terminal:
 
 ```bash
 node src/cli.js discover-owa --cdp-port 9222 --engine playwright
+
+# If you see "No candidates found", try:
+# - closing extra tabs (so CDP attaches to the calendar tab)
+# - increasing duration: --duration-ms 120000
+# - lowering the score threshold: --min-score 1
+# - disabling URL filtering (some tenants use different hosts): --no-url-filter
 ```
 
 Then, in the Outlook tab:
