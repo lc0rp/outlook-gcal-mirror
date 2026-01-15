@@ -12,6 +12,7 @@
   },
   "scripts": {
     "start": "node ./src/cli.js",
+    "mirror:all": "node ./scripts/mirror-all.js",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "node -c ./src/cli.js && node -c ./src/**/*.js"
