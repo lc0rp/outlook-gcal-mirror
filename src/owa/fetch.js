@@ -15,17 +15,35 @@ export async function owaFetchJson(page, req) {
 			const res = await fetch(url, {
 				method,
 				headers,
-				body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body),
+				body:
+					body === undefined
+						? undefined
+						: typeof body === "string"
+							? body
+							: JSON.stringify(body),
 				credentials: "include",
 			});
-			if (!res.ok) {
-				throw new Error(`OWA fetch failed: HTTP ${res.status}`);
-			}
+
 			const ct = res.headers.get("content-type") || "";
-			if (!ct.includes("application/json")) {
-				throw new Error(`OWA fetch returned non-JSON content-type: ${ct}`);
+			const text = await res.text();
+
+			if (!res.ok) {
+				const preview = text.slice(0, 500);
+				throw new Error(
+					`OWA fetch failed: HTTP ${res.status} (${ct})${preview ? `: ${preview}` : ""}`
+				);
 			}
-			return await res.json();
+
+			if (!text) return null;
+
+			try {
+				return JSON.parse(text);
+			} catch {
+				const preview = text.slice(0, 500);
+				throw new Error(
+					`OWA fetch returned non-JSON body (ct=${ct})${preview ? `: ${preview}` : ""}`
+				);
+			}
 		},
 		{ url: req.url, method, headers, body: req.body }
 	);
