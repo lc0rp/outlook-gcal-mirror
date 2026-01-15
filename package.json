@@ -17,7 +17,8 @@
     "lint": "node -c ./src/cli.js && node -c ./src/**/*.js"
   },
   "dependencies": {
-    "commander": "^14.0.2"
+    "commander": "^14.0.2",
+    "playwright": "^1.57.0"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.0.16",

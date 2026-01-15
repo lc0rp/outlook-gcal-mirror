@@ -55,7 +55,7 @@ Log in and make sure the calendar week view is loaded.
 In another terminal:
 
 ```bash
-node src/cli.js discover-owa --cdp-port 9222 --engine playwright
+node src/cli.js discover-owa --cdp-port 9222 --engine playwright -duration-ms 120000 --min-score 1 --no-url-filter                   
 
 # If you see "No candidates found", try:
 # - closing extra tabs (so CDP attaches to the calendar tab)
