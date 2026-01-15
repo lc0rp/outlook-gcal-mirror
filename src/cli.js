@@ -14,6 +14,7 @@ import {
 import { validateAbsoluteUrl, validateCdpPort, errorMessage } from "./utils.js";
 import { discoverOwaCandidates, suggestTemplate } from "./owa/discovery.js";
 import { captureOwaEvents } from "./owa/capture.js";
+import { fetchOwaEventsByTemplate } from "./owa/events.js";
 import { shouldSyncEvent } from "./sync/filters.js";
 import {
 	getGoogleSyncContext,
@@ -47,6 +48,16 @@ function parseEngine(value) {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {"capture" | "template"}
+ */
+function parseSource(value) {
+	const v = String(value ?? "").trim().toLowerCase();
+	if (v === "capture" || v === "template") return /** @type {any} */ (v);
+	throw new UserError("--source must be 'capture' or 'template'");
+}
+
+/**
  * @param {any} browser
  */
 async function disconnectBestEffort(browser) {
@@ -76,6 +87,14 @@ function normalizePath(maybe) {
  */
 function toTimeRangeIso(range) {
 	return { timeMin: range.start.toISOString(), timeMax: range.end.toISOString() };
+}
+
+function buildMirrorWindowRange({ lookbackDays, windowDays }) {
+	const start = new Date();
+	start.setDate(start.getDate() - lookbackDays);
+	const end = new Date();
+	end.setDate(end.getDate() + windowDays);
+	return { start, end };
 }
 
 function buildProgram() {
@@ -232,24 +251,82 @@ function buildProgram() {
 		});
 
 	program
-		.command("sync")
-		.description("Capture events from OWA and mirror them to Google Calendar")
+		.command("fetch-owa")
+		.description("Fetch OWA JSON via a configured request template and extract events")
 		.option("-p, --cdp-port <port>", "CDP port (overrides config)")
 		.option("--engine <engine>", "playwright|puppeteer (overrides config)")
 		.option("--target-url <url>", "OWA calendar URL (overrides config)")
-		.option("--capture-ms <ms>", "How long to capture OWA JSON", "15000")
+		.option("--window-days <n>", "Days ahead to fetch (overrides config)")
+		.option("--lookback-days <n>", "Days back to include in the fetch window", "1")
+		.option("--json", "Print extracted events as JSON")
+		.action(async (opts) => {
+			const cfgPath = program.opts().config;
+			const cfg = await loadConfig(cfgPath);
+
+			const cdpPort = validateCdpPort(opts.cdpPort ?? cfg?.outlook?.cdpPort ?? 9222);
+			const engine = parseEngine(opts.engine ?? cfg?.outlook?.engine ?? "playwright");
+			const targetUrl = validateAbsoluteUrl(opts.targetUrl ?? cfg?.outlook?.targetUrl ?? DEFAULT_TARGET_URL);
+
+			const windowDays =
+				parsePositiveInt(opts.windowDays ?? cfg?.sync?.windowDays, "--window-days") ?? 14;
+			const lookbackDays = parsePositiveInt(opts.lookbackDays, "--lookback-days") ?? 1;
+			const range = buildMirrorWindowRange({ lookbackDays, windowDays });
+
+			const template = cfg?.outlook?.owaRequestTemplate;
+			if (!template) {
+				throw new UserError(
+					"Missing outlook.owaRequestTemplate in config. Run 'discover-owa' and paste one of the suggestedTemplate blocks into config.outlook.owaRequestTemplate."
+				);
+			}
+
+			console.info("Fetching events from Outlook Web using a request template.");
+			const conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
+			try {
+				const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
+				console.info(`Using tab: ${pageUrl}`);
+
+				const events = await fetchOwaEventsByTemplate({
+					page: conn.page,
+					template,
+					range,
+					templateVars: cfg?.outlook?.owaTemplateVars,
+				});
+
+				if (opts.json) {
+					console.info(JSON.stringify(events, null, 2));
+					return;
+				}
+
+				console.info(`Extracted ${events.length} event(s).`);
+				for (const ev of events.slice(0, 15)) {
+					console.info(`- ${ev.subject} (${ev.start.dateTime ?? ev.start.date} → ${ev.end.dateTime ?? ev.end.date})`);
+				}
+				if (events.length > 15) console.info(`…and ${events.length - 15} more`);
+			} finally {
+				await disconnectBestEffort(conn.browser);
+			}
+		});
+
+	program
+		.command("sync")
+		.description("Read events from OWA and mirror them to Google Calendar")
+		.option("-p, --cdp-port <port>", "CDP port (overrides config)")
+		.option("--engine <engine>", "playwright|puppeteer (overrides config)")
+		.option("--target-url <url>", "OWA calendar URL (overrides config)")
+		.option("--source <source>", "Event source: capture|template", "capture")
+		.option("--capture-ms <ms>", "How long to capture OWA JSON (capture source only)", "15000")
 		.option(
 			"--url-includes <substr>",
-			"Only consider responses whose URL contains this substring",
+			"Only consider responses whose URL contains this substring (capture source only)",
 			"outlook.office.com"
 		)
-		.option("--no-url-filter", "Do not filter responses by URL")
+		.option("--no-url-filter", "Do not filter responses by URL (capture source only)")
 		.option("--google-credentials <path>", "Google OAuth credentials JSON (overrides config)")
 		.option("--google-token <path>", "Google token JSON path (overrides config)")
 		.option("--calendar-name <name>", "Destination Google calendar (overrides config)")
 		.option("--window-days <n>", "Days ahead to mirror (overrides config)")
 		.option("--lookback-days <n>", "Days back to include when listing mirror events", "1")
-		.option("--mark-cancelled", "Mark missing mirrored events as CANCELLED (unsafe unless full window captured)")
+		.option("--mark-cancelled", "Mark missing mirrored events as CANCELLED")
 		.option("--dry-run", "Do not write to Google; print what would happen")
 		.action(async (opts) => {
 			const cfgPath = program.opts().config;
@@ -264,21 +341,20 @@ function buildProgram() {
 			const cdpPort = validateCdpPort(opts.cdpPort ?? cfg?.outlook?.cdpPort ?? 9222);
 			const engine = parseEngine(opts.engine ?? cfg?.outlook?.engine ?? "playwright");
 			const targetUrl = validateAbsoluteUrl(opts.targetUrl ?? cfg?.outlook?.targetUrl ?? DEFAULT_TARGET_URL);
+			const source = parseSource(opts.source);
 
 			const captureMs = parsePositiveInt(opts.captureMs, "--capture-ms") ?? 15000;
 			const urlIncludes = opts.urlFilter === false ? null : String(opts.urlIncludes ?? "outlook.office.com");
 			const windowDays =
 				parsePositiveInt(opts.windowDays ?? cfg?.sync?.windowDays, "--window-days") ?? 14;
 			const lookbackDays = parsePositiveInt(opts.lookbackDays, "--lookback-days") ?? 1;
+			const range = buildMirrorWindowRange({ lookbackDays, windowDays });
 
-			const credentialsPath =
-				normalizePath(opts.googleCredentials ?? cfg?.google?.credentialsPath) ?? null;
-			const tokenPath =
-				normalizePath(opts.googleToken ?? cfg?.google?.tokenPath) ?? DEFAULT_TOKEN_PATH;
+			const credentialsPath = normalizePath(opts.googleCredentials ?? cfg?.google?.credentialsPath) ?? null;
+			const tokenPath = normalizePath(opts.googleToken ?? cfg?.google?.tokenPath) ?? DEFAULT_TOKEN_PATH;
 			const calendarName = String(opts.calendarName ?? cfg?.google?.calendarName ?? "Outlook Mirror");
 
-			const markCancelled =
-				opts.markCancelled !== undefined ? !!opts.markCancelled : !!cfg?.sync?.markCancelled;
+			const markCancelled = opts.markCancelled !== undefined ? !!opts.markCancelled : !!cfg?.sync?.markCancelled;
 
 			if (!opts.dryRun && !credentialsPath) {
 				throw new UserError(
@@ -286,15 +362,36 @@ function buildProgram() {
 				);
 			}
 
-			console.info("Capturing events from Outlook Web.");
-			console.info("Tip: while capturing, click events / navigate weeks so OWA loads JSON.");
+			if (source === "capture") {
+				console.info("Capturing events from Outlook Web.");
+				console.info("Tip: while capturing, click events / navigate weeks so OWA loads JSON.");
+			} else {
+				console.info("Fetching events from Outlook Web using a request template.");
+			}
 
 			const conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
 			try {
 				const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
 				console.info(`Using tab: ${pageUrl}`);
 
-				let events = await captureOwaEvents({ page: conn.page, durationMs: captureMs, urlIncludes });
+				let events;
+				if (source === "capture") {
+					events = await captureOwaEvents({ page: conn.page, durationMs: captureMs, urlIncludes });
+				} else {
+					const template = cfg?.outlook?.owaRequestTemplate;
+					if (!template) {
+						throw new UserError(
+							"Missing outlook.owaRequestTemplate in config. Run 'discover-owa' and paste one of the suggestedTemplate blocks into config.outlook.owaRequestTemplate."
+						);
+					}
+					events = await fetchOwaEventsByTemplate({
+						page: conn.page,
+						template,
+						range,
+						templateVars: cfg?.outlook?.owaTemplateVars,
+					});
+				}
+
 				if (cfg?.outlook) {
 					events = events.filter((ev) =>
 						shouldSyncEvent(ev, {
@@ -335,16 +432,13 @@ function buildProgram() {
 				if (!markCancelled) return;
 
 				console.info("mark-cancelled enabled: listing mirror events and cancelling missing source keys.");
-				console.info(
-					"Warning: only enable this if you're confident the capture covered the full time window."
-				);
+				if (source === "capture") {
+					console.info(
+						"Warning: capture mode is partial by nature; only enable this if you're confident the capture covered the full time window."
+					);
+				}
 
-				const start = new Date();
-				start.setDate(start.getDate() - lookbackDays);
-				const end = new Date();
-				end.setDate(end.getDate() + windowDays);
-				const { timeMin, timeMax } = toTimeRangeIso({ start, end });
-
+				const { timeMin, timeMax } = toTimeRangeIso(range);
 				const mirrorEvents = await listMirrorEvents({
 					calendar,
 					calendarId,
@@ -361,7 +455,7 @@ function buildProgram() {
 					const res = await markMirroredCancelled({ calendar, calendarId, gcalEvent: gcalEv });
 					if (res.action === "cancelled") cancelled += 1;
 				}
-				console.info(`Cancelled ${cancelled} mirror event(s) not present in capture.`);
+				console.info(`Cancelled ${cancelled} mirror event(s) not present in scan.`);
 			} finally {
 				await disconnectBestEffort(conn.browser);
 			}

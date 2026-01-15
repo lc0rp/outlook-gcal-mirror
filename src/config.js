@@ -18,6 +18,13 @@ export const DEFAULT_TOKEN_PATH = path.join(DEFAULT_CONFIG_DIR, "google-token.js
  *   skipCalendars?: string[],
  *   includeOwnerEmails?: string[],
  *   skipOwnerEmails?: string[],
+ *   owaRequestTemplate?: {
+ *     url: string,
+ *     method: string,
+ *     headers?: Record<string,string>,
+ *     body?: any,
+ *   },
+ *   owaTemplateVars?: Record<string,string>,
  * }} outlook
  * @property {{
  *   credentialsPath: string,

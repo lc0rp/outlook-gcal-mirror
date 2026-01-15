@@ -14,7 +14,9 @@ See `SPEC.md` for the current mini-spec and decisions.
 This repo is split conceptually into two layers:
 
 1) **OWA in-browser client** (`src/owa/*`)
-   - Extracts events by capturing OWA JSON responses (and can optionally run `fetch()` inside the tab using existing cookies/session).
+   - Extracts events by either:
+     - capturing OWA JSON responses (passive; depends on what the UI loads), or
+     - running `fetch()` inside the tab using existing cookies/session (deterministic once you have a stable internal endpoint).
    - Supports a **discovery** mode to help identify OWA’s internal JSON endpoints.
 
 2) **Google Calendar sync** (`src/google/*`, `src/sync/*`)
@@ -68,7 +70,30 @@ Then, in the Outlook tab:
 - Click a calendar event to open its details.
 - Optionally navigate between weeks.
 
-The discovery command prints candidate request patterns (URL + method) and a suggested template config.
+The discovery command prints candidate request patterns (URL + method) and a `suggestedTemplate`.
+
+To use template-based fetch mode, paste one of those templates into your config:
+
+```json
+{
+  "outlook": {
+    "owaRequestTemplate": {
+      "method": "POST",
+      "url": "https://outlook.office.com/...",
+      "headers": {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "x-owa-canary": "{{owaCanary}}"
+      },
+      "body": "{{body}}"
+    }
+  }
+}
+```
+
+Notes:
+- The template supports placeholders: `{{start}}`, `{{end}}`, `{{owaCanary}}`.
+- If your endpoint needs extra constants (folder ids, user ids, etc.), put them under `outlook.owaTemplateVars` and reference them as `{{myVar}}`.
 
 ### 3) Google OAuth (one-time)
 
@@ -76,21 +101,50 @@ You’ll need a Google Cloud OAuth client for an “Installed app” (Desktop).
 
 Provide credentials JSON via `--google-credentials /path/to/client_secret.json`.
 
-### 4) Run a sync
+### 4) Verify extraction
+
+Passive capture mode:
+
+```bash
+node src/cli.js capture-owa --cdp-port 9222 --engine playwright --json
+```
+
+Template fetch mode (requires `outlook.owaRequestTemplate` in config):
+
+```bash
+node src/cli.js fetch-owa --json
+```
+
+### 5) Run a sync
+
+Capture mode (default):
 
 ```bash
 node src/cli.js sync \
   --cdp-port 9222 \
   --engine playwright \
+  --source capture \
+  --capture-ms 30000 \
+  --google-credentials /path/to/client_secret.json \
+  --calendar-name "Outlook Mirror" \
+  --window-days 14
+```
+
+Template mode (recommended once you have a stable endpoint):
+
+```bash
+node src/cli.js sync \
+  --cdp-port 9222 \
+  --engine playwright \
+  --source template \
   --google-credentials /path/to/client_secret.json \
   --calendar-name "Outlook Mirror" \
   --window-days 14
 ```
 
 Notes:
-- The current `sync` implementation reads events from whatever JSON OWA loads during the capture window.
-- If you need more coverage, increase `--capture-ms` and navigate weeks while it runs.
-- Only use `--mark-cancelled` if you’re confident the capture covered the full time window.
+- Capture mode only sees what OWA loads during the capture window. If you need more coverage, increase `--capture-ms` and navigate weeks while it runs.
+- Only use `--mark-cancelled` in capture mode if you’re confident the capture covered the full time window.
 
 ## Safety: no attendee email
 
