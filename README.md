@@ -72,6 +72,22 @@ Then, in the Outlook tab:
 
 The discovery command prints candidate request patterns (URL + method) and a `suggestedTemplate`.
 
+If live discovery misses the initial payload, you can record traffic and scan the log later:
+
+```bash
+browser-keepalive https://outlook.office.com/calendar/view/week \
+  -p 9222 \
+  --only-if-idle \
+  --record-network ~/.browser-keepalive/logs/owa.ndjson \
+  --record-include outlook.office.com
+
+node src/cli.js discover-owa-log --log ~/.browser-keepalive/logs/owa.ndjson --save-templates
+```
+
+If you use `--save-templates`, the file defaults to `~/.config/outlook-gcal-mirror/templates.json`. You can point to it via `outlook.owaTemplatesPath` in config.
+
+Note: the log can include sensitive data; delete it when done or use `--no-record-body`.
+
 To use template-based fetch mode, paste one of those templates into your config:
 
 ```json

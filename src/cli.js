@@ -7,14 +7,20 @@ import { connectOverCdp } from "./cdp/index.js";
 import { UserError } from "./errors.js";
 import {
 	DEFAULT_CONFIG_PATH,
+	DEFAULT_TEMPLATES_PATH,
 	DEFAULT_TOKEN_PATH,
 	loadConfig,
 	saveConfig,
 } from "./config.js";
 import { validateAbsoluteUrl, validateCdpPort, errorMessage } from "./utils.js";
-import { discoverOwaCandidates, suggestTemplate } from "./owa/discovery.js";
+import {
+	discoverOwaCandidates,
+	discoverOwaCandidatesFromLog,
+	suggestTemplate,
+} from "./owa/discovery.js";
 import { captureOwaEvents } from "./owa/capture.js";
 import { fetchOwaEventsByTemplate } from "./owa/events.js";
+import { loadTemplateFromFile, saveTemplatesFile } from "./owa/templates.js";
 import { shouldSyncEvent } from "./sync/filters.js";
 import {
 	getGoogleSyncContext,
@@ -80,6 +86,17 @@ async function disconnectBestEffort(browser) {
 function normalizePath(maybe) {
 	if (!maybe) return null;
 	return String(maybe);
+}
+
+/**
+ * @param {import('./config.js').MirrorConfig | null | undefined} cfg
+ */
+async function resolveOwaTemplate(cfg) {
+	const inlineTemplate = cfg?.outlook?.owaRequestTemplate;
+	if (inlineTemplate) return inlineTemplate;
+
+	const templatesPath = cfg?.outlook?.owaTemplatesPath ?? DEFAULT_TEMPLATES_PATH;
+	return loadTemplateFromFile(templatesPath);
 }
 
 /**
@@ -207,6 +224,64 @@ function buildProgram() {
 		});
 
 	program
+		.command("discover-owa-log")
+		.description("Scan a browser-keepalive NDJSON log and print candidate JSON endpoints")
+		.option("--log <path>", "Path to browser-keepalive NDJSON log")
+		.option("--min-score <n>", "Minimum JSON key score", "3")
+		.option(
+			"--url-includes <substr>",
+			"Only consider responses whose URL contains this substring",
+			"outlook.office.com"
+		)
+		.option("--no-url-filter", "Do not filter responses by URL")
+		.option("--save-templates", "Save candidate templates to disk")
+		.option(
+			"--templates-path <path>",
+			"Path to templates JSON (default: ~/.config/outlook-gcal-mirror/templates.json)"
+		)
+		.action(async (opts) => {
+			const logPath = normalizePath(opts.log);
+			if (!logPath) {
+				throw new UserError("--log is required");
+			}
+			const minScore = parsePositiveInt(opts.minScore, "--min-score") ?? 3;
+			const urlIncludes = opts.urlFilter === false ? null : String(opts.urlIncludes ?? "outlook.office.com");
+
+			const candidates = await discoverOwaCandidatesFromLog({
+				filePath: logPath,
+				minScore,
+				urlIncludes,
+			});
+
+			if (!candidates.length) {
+				console.info("No candidates found. Capture more traffic or relax --min-score/--url-includes.");
+				return;
+			}
+
+			const enriched = candidates.map((c) => ({
+				...c,
+				suggestedTemplate: suggestTemplate(c),
+			}));
+
+			if (opts.saveTemplates) {
+				const templatesPath = normalizePath(opts.templatesPath) ?? DEFAULT_TEMPLATES_PATH;
+				await saveTemplatesFile(templatesPath, {
+					generatedAt: new Date().toISOString(),
+					candidates: enriched,
+				});
+				console.info(`Saved templates: ${templatesPath}`);
+			}
+
+			console.info(`Found ${candidates.length} candidate endpoint(s):`);
+			for (const c of enriched) {
+				console.info(`\n- ${c.method} ${c.url}`);
+				console.info(`  interestingKeys: ${c.interestingKeys.join(", ")}`);
+				console.info("  suggestedTemplate:");
+				console.info(JSON.stringify(c.suggestedTemplate, null, 2));
+			}
+		});
+
+	program
 		.command("capture-owa")
 		.description("Capture OWA JSON responses for a short window and extract events")
 		.option("-p, --cdp-port <port>", "CDP port", "9222")
@@ -272,10 +347,10 @@ function buildProgram() {
 			const lookbackDays = parsePositiveInt(opts.lookbackDays, "--lookback-days") ?? 1;
 			const range = buildMirrorWindowRange({ lookbackDays, windowDays });
 
-			const template = cfg?.outlook?.owaRequestTemplate;
+			const template = await resolveOwaTemplate(cfg);
 			if (!template) {
 				throw new UserError(
-					"Missing outlook.owaRequestTemplate in config. Run 'discover-owa' and paste one of the suggestedTemplate blocks into config.outlook.owaRequestTemplate."
+					"Missing Outlook request template. Run 'discover-owa' or 'discover-owa-log --save-templates' and set outlook.owaRequestTemplate (or outlook.owaTemplatesPath)."
 				);
 			}
 
@@ -378,10 +453,10 @@ function buildProgram() {
 				if (source === "capture") {
 					events = await captureOwaEvents({ page: conn.page, durationMs: captureMs, urlIncludes });
 				} else {
-					const template = cfg?.outlook?.owaRequestTemplate;
+					const template = await resolveOwaTemplate(cfg);
 					if (!template) {
 						throw new UserError(
-							"Missing outlook.owaRequestTemplate in config. Run 'discover-owa' and paste one of the suggestedTemplate blocks into config.outlook.owaRequestTemplate."
+							"Missing Outlook request template. Run 'discover-owa' or 'discover-owa-log --save-templates' and set outlook.owaRequestTemplate (or outlook.owaTemplatesPath)."
 						);
 					}
 					events = await fetchOwaEventsByTemplate({

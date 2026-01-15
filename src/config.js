@@ -7,6 +7,7 @@ import { UserError } from "./errors.js";
 export const DEFAULT_CONFIG_DIR = path.join(os.homedir(), ".config", "outlook-gcal-mirror");
 export const DEFAULT_CONFIG_PATH = path.join(DEFAULT_CONFIG_DIR, "config.json");
 export const DEFAULT_TOKEN_PATH = path.join(DEFAULT_CONFIG_DIR, "google-token.json");
+export const DEFAULT_TEMPLATES_PATH = path.join(DEFAULT_CONFIG_DIR, "templates.json");
 
 /**
  * @typedef {object} MirrorConfig
@@ -18,6 +19,7 @@ export const DEFAULT_TOKEN_PATH = path.join(DEFAULT_CONFIG_DIR, "google-token.js
  *   skipCalendars?: string[],
  *   includeOwnerEmails?: string[],
  *   skipOwnerEmails?: string[],
+ *   owaTemplatesPath?: string,
  *   owaRequestTemplate?: {
  *     url: string,
  *     method: string,
