@@ -1,3 +1,6 @@
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
+
 import { templateReplace } from "../utils.js";
 
 /**
@@ -5,6 +8,7 @@ import { templateReplace } from "../utils.js";
  * @property {string} method
  * @property {string} url
  * @property {string[]} interestingKeys
+ * @property {number} score
  */
 
 const DEFAULT_KEY_HINTS = [
@@ -50,6 +54,82 @@ export function scoreOwaJson(json) {
 	}
 
 	return { score, keys };
+}
+
+function parseJsonFromText(text) {
+	if (!text || typeof text !== "string") return null;
+	let trimmed = text.trim();
+	if (!trimmed) return null;
+
+	const firstBrace = trimmed.search(/[\[{]/);
+	if (firstBrace > 0) {
+		trimmed = trimmed.slice(firstBrace);
+	}
+
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * @param {{ filePath: string, minScore?: number, urlIncludes?: string | null }} opts
+ */
+export async function discoverOwaCandidatesFromLog({
+	filePath,
+	minScore = 3,
+	urlIncludes = "outlook.office.com",
+}) {
+	/** @type {OwaCandidate[]} */
+	const candidates = [];
+
+	const rl = createInterface({
+		input: createReadStream(filePath),
+		crlfDelay: Infinity,
+	});
+
+	for await (const line of rl) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		let entry;
+		try {
+			entry = JSON.parse(trimmed);
+		} catch {
+			continue;
+		}
+
+		const url = entry?.url ? String(entry.url) : "";
+		if (!url) continue;
+		if (urlIncludes && !url.includes(urlIncludes)) continue;
+
+		const body = entry?.body ?? entry?.bodyText ?? entry?.responseBody ?? null;
+		if (!body || typeof body !== "string") continue;
+
+		const json = parseJsonFromText(body);
+		if (!json) continue;
+
+		const { score, keys } = scoreOwaJson(json);
+		if (score < minScore) continue;
+
+		candidates.push({
+			method: entry?.method ? String(entry.method) : "GET",
+			url,
+			interestingKeys: keys.slice(0, 20),
+			score,
+		});
+	}
+
+	const bestByKey = new Map();
+	for (const c of candidates) {
+		const key = `${c.method} ${c.url}`;
+		const prev = bestByKey.get(key);
+		if (!prev || c.score > prev.score) {
+			bestByKey.set(key, c);
+		}
+	}
+
+	return Array.from(bestByKey.values());
 }
 
 /**
@@ -99,6 +179,7 @@ export async function discoverOwaCandidates({ page, durationMs, minScore = 3, ur
 				method,
 				url: String(url),
 				interestingKeys: keys.slice(0, 20),
+				score,
 			});
 		} catch {
 			// ignore
@@ -114,17 +195,17 @@ export async function discoverOwaCandidates({ page, durationMs, minScore = 3, ur
 		// some implementations may not support off
 	}
 
-	// De-dupe by method+url
-	const seen = new Set();
-	const deduped = [];
+	// De-dupe by method+url (keep highest score)
+	const bestByKey = new Map();
 	for (const c of candidates) {
 		const key = `${c.method} ${c.url}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
-		deduped.push(c);
+		const prev = bestByKey.get(key);
+		if (!prev || c.score > prev.score) {
+			bestByKey.set(key, c);
+		}
 	}
 
-	return deduped;
+	return Array.from(bestByKey.values());
 }
 
 /**
