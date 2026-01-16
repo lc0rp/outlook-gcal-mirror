@@ -3,6 +3,7 @@
 Mirror Outlook Web (OWA) calendar event **titles + attendee names** into a dedicated Google Calendar so Granola can see the real meeting details.
 
 Constraints:
+
 - No Outlook/Graph API access: we read events from **outlook.office.com in a real logged-in browser**.
 - We connect to that browser via **CDP** (Chrome DevTools Protocol) using [`browser-keepalive`](https://github.com/lc0rp/browser-keepalive).
 - Google Calendar writes use OAuth and **must not email attendees**.
@@ -67,6 +68,7 @@ node src/cli.js discover-owa --cdp-port 9222 --engine playwright -duration-ms 12
 ```
 
 Then, in the Outlook tab:
+
 - Click a calendar event to open its details.
 - Optionally navigate between weeks.
 
@@ -92,6 +94,7 @@ To use template-based fetch mode, paste one of those templates into your config:
 ```
 
 Notes:
+
 - The template supports placeholders: `{{start}}`, `{{end}}`, `{{owaCanary}}`.
 - If your endpoint needs extra constants (folder ids, user ids, etc.), put them under `outlook.owaTemplateVars` and reference them as `{{myVar}}`.
 
