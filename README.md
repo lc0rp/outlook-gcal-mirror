@@ -14,13 +14,14 @@ See `SPEC.md` for the current mini-spec and decisions.
 
 This repo is split conceptually into two layers:
 
-1) **OWA in-browser client** (`src/owa/*`)
+1. **OWA in-browser client** (`src/owa/*`)
+
    - Extracts events by either:
      - capturing OWA JSON responses (passive; depends on what the UI loads), or
      - running `fetch()` inside the tab using existing cookies/session (deterministic once you have a stable internal endpoint).
    - Supports a **discovery** mode to help identify OWA’s internal JSON endpoints.
 
-2) **Google Calendar sync** (`src/google/*`, `src/sync/*`)
+2. **Google Calendar sync** (`src/google/*`, `src/sync/*`)
    - Upserts events into a dedicated Google calendar (default name: `Outlook Mirror`).
    - Stores a stable source id in `extendedProperties.private` for idempotency.
 
@@ -58,7 +59,7 @@ Log in and make sure the calendar week view is loaded.
 In another terminal:
 
 ```bash
-node src/cli.js discover-owa --cdp-port 9222 --engine playwright -duration-ms 120000 --min-score 1 --no-url-filter                   
+node src/cli.js discover-owa --cdp-port 9222 --engine playwright -duration-ms 120000 --min-score 1 --no-url-filter
 
 # If you see "No candidates found", try:
 # - closing extra tabs (so CDP attaches to the calendar tab)
@@ -162,6 +163,7 @@ node src/cli.js sync \
 ```
 
 Notes:
+
 - Capture mode only sees what OWA loads during the capture window. If you need more coverage, increase `--capture-ms` and navigate weeks while it runs.
 - Only use `--mark-cancelled` in capture mode if you’re confident the capture covered the full time window.
 
