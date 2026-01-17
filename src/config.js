@@ -26,6 +26,12 @@ export const DEFAULT_TEMPLATES_PATH = path.join(DEFAULT_CONFIG_DIR, "templates.j
  *     headers?: Record<string,string>,
  *     body?: any,
  *   },
+ *   owaEventRequestTemplate?: {
+ *     url: string,
+ *     method: string,
+ *     headers?: Record<string,string>,
+ *     body?: any,
+ *   },
  *   owaTemplateVars?: Record<string,string>,
  * }} outlook
  * @property {{

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { extractOutlookEventsFromJson } from "./extract.js";
+import { extractOutlookEventIdsFromJson, extractOutlookEventsFromJson } from "./extract.js";
 
 describe("extractOutlookEventsFromJson", () => {
 	test("extracts a basic event shape", () => {
@@ -36,5 +36,21 @@ describe("extractOutlookEventsFromJson", () => {
 		expect(events[0].subject).toBe("Planning");
 		expect(events[0].sourceId).toBe("item-123");
 		expect(events[0].attendeeNames).toEqual(["Carol", "Dave"]);
+	});
+
+	test("captures ItemId.Id values", () => {
+		const json = {
+			Subject: "Demo",
+			Start: "2026-03-01T09:00:00Z",
+			End: "2026-03-01T10:00:00Z",
+			ItemId: { Id: "AAk-test-item" },
+		};
+
+		const events = extractOutlookEventsFromJson(json);
+		expect(events).toHaveLength(1);
+		expect(events[0].sourceId).toBe("AAk-test-item");
+
+		const ids = extractOutlookEventIdsFromJson(json);
+		expect(ids).toEqual(["AAk-test-item"]);
 	});
 });

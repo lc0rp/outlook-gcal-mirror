@@ -18,7 +18,7 @@ export async function loadTemplatesFile(filePath = DEFAULT_TEMPLATES_PATH) {
 /**
  * @param {any} data
  */
-export function selectTemplateFromTemplates(data) {
+export function selectTemplateFromTemplates(data, predicate) {
 	if (!data) return null;
 
 	const list = Array.isArray(data)
@@ -27,16 +27,16 @@ export function selectTemplateFromTemplates(data) {
 
 	for (const item of list) {
 		if (!item) continue;
-		if (item.suggestedTemplate) return item.suggestedTemplate;
-		if (item.template) return item.template;
-		if (item.url && item.method) {
-			return {
-				url: item.url,
-				method: item.method,
-				headers: item.headers,
-				body: item.body,
-			};
-		}
+		const template = item.suggestedTemplate
+			? item.suggestedTemplate
+			: item.template
+				? item.template
+				: item.url && item.method
+					? { url: item.url, method: item.method, headers: item.headers, body: item.body }
+					: null;
+		if (!template) continue;
+		if (predicate && !predicate(template, item)) continue;
+		return template;
 	}
 
 	return null;
@@ -45,9 +45,9 @@ export function selectTemplateFromTemplates(data) {
 /**
  * @param {string} filePath
  */
-export async function loadTemplateFromFile(filePath = DEFAULT_TEMPLATES_PATH) {
+export async function loadTemplateFromFile(filePath = DEFAULT_TEMPLATES_PATH, predicate) {
 	const data = await loadTemplatesFile(filePath);
-	return selectTemplateFromTemplates(data);
+	return selectTemplateFromTemplates(data, predicate);
 }
 
 /**

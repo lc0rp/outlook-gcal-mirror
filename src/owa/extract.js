@@ -31,6 +31,18 @@ function asString(value) {
 }
 
 /**
+ * @param {Record<string, any>} node
+ */
+function extractSourceId(node) {
+	return (
+		asString(node.Id ?? node.id) ??
+		asString(node.ItemId?.Id ?? node.ItemId?.id ?? node.itemId?.Id ?? node.itemId?.id) ??
+		asString(node.ItemId ?? node.itemId) ??
+		null
+	);
+}
+
+/**
  * @param {unknown} dt
  */
 function parseDateTime(dt) {
@@ -131,7 +143,7 @@ export function extractOutlookEventsFromJson(json) {
 		const end = parseDateTime(node.End ?? node.end);
 
 		if (subject && start && end) {
-			const sourceId = asString(node.Id ?? node.id ?? node.ItemId ?? node.itemId) ?? null;
+			const sourceId = extractSourceId(node);
 			const organizerEmail =
 				asString(node.Organizer?.EmailAddress?.Address ?? node.organizer?.email ?? node.organizerEmail) ?? null;
 			const sourceCalendarName = asString(node.CalendarName ?? node.calendarName) ?? null;
@@ -179,4 +191,43 @@ export function extractOutlookEventsFromJson(json) {
 	return out;
 }
 
-export const _internal = { parseDateTime, extractAttendeeNames };
+/**
+ * Extract event ItemId values from calendar view payloads.
+ * @param {unknown} json
+ */
+export function extractOutlookEventIdsFromJson(json) {
+	const ids = [];
+
+	const visit = (node) => {
+		if (!node) return;
+		if (Array.isArray(node)) {
+			for (const item of node) visit(item);
+			return;
+		}
+		if (!isObject(node)) return;
+
+		const subject = asString(node.Subject ?? node.subject);
+		const start = parseDateTime(node.Start ?? node.start);
+		const end = parseDateTime(node.End ?? node.end);
+
+		if (subject && start && end) {
+			const sourceId = extractSourceId(node);
+			if (sourceId) ids.push(sourceId);
+		}
+
+		for (const v of Object.values(node)) visit(v);
+	};
+
+	visit(json);
+
+	const unique = new Set();
+	const out = [];
+	for (const id of ids) {
+		if (unique.has(id)) continue;
+		unique.add(id);
+		out.push(id);
+	}
+	return out;
+}
+
+export const _internal = { parseDateTime, extractAttendeeNames, extractSourceId };

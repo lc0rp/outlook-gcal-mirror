@@ -9,6 +9,7 @@ import { templateReplace } from "../utils.js";
  * @property {string} url
  * @property {string[]} interestingKeys
  * @property {number} score
+ * @property {string | null} [requestBody]
  */
 
 const DEFAULT_KEY_HINTS = [
@@ -112,11 +113,15 @@ export async function discoverOwaCandidatesFromLog({
 		const { score, keys } = scoreOwaJson(json);
 		if (score < minScore) continue;
 
+		const requestBody =
+			typeof entry?.requestPostData === "string" ? entry.requestPostData : null;
+
 		candidates.push({
 			method: entry?.method ? String(entry.method) : "GET",
 			url,
 			interestingKeys: keys.slice(0, 20),
 			score,
+			requestBody,
 		});
 	}
 
@@ -213,6 +218,12 @@ export async function discoverOwaCandidates({ page, durationMs, minScore = 3, ur
  * @param {{ method: string, url: string }} candidate
  */
 export function suggestTemplate(candidate) {
+	let body = null;
+	if (candidate?.requestBody) {
+		const parsed = parseJsonFromText(candidate.requestBody);
+		body = parsed ?? candidate.requestBody;
+	}
+
 	return {
 		method: candidate.method,
 		url: templateReplace(candidate.url, {
@@ -224,7 +235,7 @@ export function suggestTemplate(candidate) {
 			"content-type": "application/json",
 			"x-owa-canary": "{{owaCanary}}",
 		},
-		body: "{{body}}",
+		body,
 	};
 }
 

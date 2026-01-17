@@ -55,6 +55,35 @@ export async function owaFetchJson(page, req) {
  * @param {any} page
  */
 export async function getOwaCanary(page) {
+	const cookieNames = ["X-OWA-CANARY", "OWA-CANARY", "XOWACANARY"];
+
+	try {
+		if (page?.context && typeof page.context === "function") {
+			const context = page.context();
+			if (context && typeof context.cookies === "function") {
+				const cookies = await context.cookies();
+				for (const c of cookies) {
+					if (cookieNames.includes(c.name) && c.value) return c.value;
+				}
+			}
+		} else if (page?.browserContext && typeof page.browserContext === "function") {
+			const context = page.browserContext();
+			if (context && typeof context.cookies === "function") {
+				const cookies = await context.cookies();
+				for (const c of cookies) {
+					if (cookieNames.includes(c.name) && c.value) return c.value;
+				}
+			}
+		} else if (page?.cookies && typeof page.cookies === "function") {
+			const cookies = await page.cookies();
+			for (const c of cookies) {
+				if (cookieNames.includes(c.name) && c.value) return c.value;
+			}
+		}
+	} catch {
+		// ignore and try in-page lookup
+	}
+
 	return await page.evaluate(() => {
 		const cookie = document.cookie || "";
 		// Common cookie key in OWA variants.
@@ -72,6 +101,49 @@ export async function getOwaCanary(page) {
 			w?.__OWA_CANARY__ ||
 			null
 		);
+	});
+}
+
+/**
+ * Best-effort way to find a bearer token for Outlook Web requests.
+ * @param {any} page
+ */
+export async function getOwaBearerToken(page) {
+	return await page.evaluate(() => {
+		const tokens = [];
+		const matchesTarget = (key) =>
+			/https:\/\/outlook\.office\.com|https:\/\/outlook\.cloud\.microsoft/i.test(key);
+
+		for (const key of Object.keys(localStorage || {})) {
+			if (!/accesstoken/i.test(key)) continue;
+			if (!matchesTarget(key)) continue;
+			const raw = localStorage.getItem(key);
+			if (!raw) continue;
+			try {
+				const parsed = JSON.parse(raw);
+				if (parsed?.secret && parsed?.tokenType) {
+					tokens.push(`${parsed.tokenType} ${parsed.secret}`);
+				}
+			} catch {
+				// ignore
+			}
+		}
+
+		for (const key of Object.keys(sessionStorage || {})) {
+			if (!/token|auth/i.test(key)) continue;
+			const raw = sessionStorage.getItem(key);
+			if (!raw) continue;
+			try {
+				const parsed = JSON.parse(raw);
+				if (parsed?.token && parsed?.tokenType) {
+					tokens.push(`${parsed.tokenType} ${parsed.token}`);
+				}
+			} catch {
+				// ignore
+			}
+		}
+
+		return tokens[0] ?? null;
 	});
 }
 

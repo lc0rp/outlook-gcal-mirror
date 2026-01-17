@@ -19,7 +19,7 @@ import {
 	suggestTemplate,
 } from "./owa/discovery.js";
 import { captureOwaEvents } from "./owa/capture.js";
-import { fetchOwaEventsByTemplate } from "./owa/events.js";
+import { fetchOwaEventsByTemplate, fetchOwaEventsByTemplates } from "./owa/events.js";
 import { loadTemplateFromFile, saveTemplatesFile } from "./owa/templates.js";
 import { shouldSyncEvent } from "./sync/filters.js";
 import {
@@ -91,12 +91,36 @@ function normalizePath(maybe) {
 /**
  * @param {import('./config.js').MirrorConfig | null | undefined} cfg
  */
-async function resolveOwaTemplate(cfg) {
-	const inlineTemplate = cfg?.outlook?.owaRequestTemplate;
-	if (inlineTemplate) return inlineTemplate;
+function templateMatchesAction(template, action) {
+	if (!template || typeof template !== "object") return false;
+	const url = String(template.url ?? "");
+	return url.includes(`action=${action}`);
+}
 
+async function resolveOwaTemplates(cfg) {
 	const templatesPath = cfg?.outlook?.owaTemplatesPath ?? DEFAULT_TEMPLATES_PATH;
-	return loadTemplateFromFile(templatesPath);
+
+	let viewTemplate = cfg?.outlook?.owaRequestTemplate ?? null;
+	let eventTemplate = cfg?.outlook?.owaEventRequestTemplate ?? null;
+
+	if (!viewTemplate) {
+		viewTemplate = await loadTemplateFromFile(
+			templatesPath,
+			(template) => templateMatchesAction(template, "GetCalendarView")
+		);
+		if (!viewTemplate) {
+			viewTemplate = await loadTemplateFromFile(templatesPath);
+		}
+	}
+
+	if (!eventTemplate) {
+		eventTemplate = await loadTemplateFromFile(
+			templatesPath,
+			(template) => templateMatchesAction(template, "GetCalendarEvent")
+		);
+	}
+
+	return { viewTemplate, eventTemplate };
 }
 
 /**
@@ -347,22 +371,27 @@ function buildProgram() {
 			const lookbackDays = parsePositiveInt(opts.lookbackDays, "--lookback-days") ?? 1;
 			const range = buildMirrorWindowRange({ lookbackDays, windowDays });
 
-			const template = await resolveOwaTemplate(cfg);
-			if (!template) {
+			const { viewTemplate, eventTemplate } = await resolveOwaTemplates(cfg);
+			if (!viewTemplate) {
 				throw new UserError(
 					"Missing Outlook request template. Run 'discover-owa' or 'discover-owa-log --save-templates' and set outlook.owaRequestTemplate (or outlook.owaTemplatesPath)."
 				);
 			}
 
-			console.info("Fetching events from Outlook Web using a request template.");
+			if (!eventTemplate) {
+				console.info("Note: event details template not found; attendee names may be missing.");
+			}
+
+			console.info("Fetching events from Outlook Web using request templates.");
 			const conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
 			try {
 				const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
 				console.info(`Using tab: ${pageUrl}`);
 
-				const events = await fetchOwaEventsByTemplate({
+				const events = await fetchOwaEventsByTemplates({
 					page: conn.page,
-					template,
+					viewTemplate,
+					eventTemplate,
 					range,
 					templateVars: cfg?.outlook?.owaTemplateVars,
 				});
@@ -437,11 +466,22 @@ function buildProgram() {
 				);
 			}
 
+			let viewTemplate = null;
+			let eventTemplate = null;
 			if (source === "capture") {
 				console.info("Capturing events from Outlook Web.");
 				console.info("Tip: while capturing, click events / navigate weeks so OWA loads JSON.");
 			} else {
-				console.info("Fetching events from Outlook Web using a request template.");
+				console.info("Fetching events from Outlook Web using request templates.");
+				({ viewTemplate, eventTemplate } = await resolveOwaTemplates(cfg));
+				if (!viewTemplate) {
+					throw new UserError(
+						"Missing Outlook request template. Run 'discover-owa' or 'discover-owa-log --save-templates' and set outlook.owaRequestTemplate (or outlook.owaTemplatesPath)."
+					);
+				}
+				if (!eventTemplate) {
+					console.info("Note: event details template not found; attendee names may be missing.");
+				}
 			}
 
 			const conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
@@ -453,15 +493,10 @@ function buildProgram() {
 				if (source === "capture") {
 					events = await captureOwaEvents({ page: conn.page, durationMs: captureMs, urlIncludes });
 				} else {
-					const template = await resolveOwaTemplate(cfg);
-					if (!template) {
-						throw new UserError(
-							"Missing Outlook request template. Run 'discover-owa' or 'discover-owa-log --save-templates' and set outlook.owaRequestTemplate (or outlook.owaTemplatesPath)."
-						);
-					}
-					events = await fetchOwaEventsByTemplate({
+					events = await fetchOwaEventsByTemplates({
 						page: conn.page,
-						template,
+						viewTemplate: viewTemplate,
+						eventTemplate,
 						range,
 						templateVars: cfg?.outlook?.owaTemplateVars,
 					});
