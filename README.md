@@ -5,7 +5,7 @@ Mirror Outlook Web (OWA) calendar event **titles + attendee names** into a dedic
 Constraints:
 
 - No Outlook/Graph API access: we read events from **outlook.office.com in a real logged-in browser**.
-- We connect to that browser via **CDP** (Chrome DevTools Protocol) using [`browser-keepalive`](https://github.com/lc0rp/browser-keepalive).
+- We connect to that browser via **CDP** (Chrome DevTools Protocol) using the built-in keepalive command.
 - Google Calendar writes use OAuth and **must not email attendees**.
 
 ## Architecture
@@ -46,10 +46,10 @@ npm install googleapis
 
 ### 1) Start Outlook in a CDP-enabled browser
 
-Use `browser-keepalive` to start Chromium with CDP enabled:
+Use the built-in keepalive command to start Chromium with CDP enabled:
 
 ```bash
-browser-keepalive https://outlook.office.com/calendar/view/week -p 9222 --only-if-idle
+node src/cli.js keepalive --target-url https://outlook.office.com/calendar/view/week -p 9222 --only-if-idle
 ```
 
 Log in and make sure the calendar week view is loaded.
@@ -78,13 +78,14 @@ The discovery command prints candidate request patterns (URL + method) and a `su
 If live discovery misses the initial payload, you can record traffic and scan the log later:
 
 ```bash
-browser-keepalive https://outlook.office.com/calendar/view/week \
+node src/cli.js keepalive \
+  --target-url https://outlook.office.com/calendar/view/week \
   -p 9222 \
   --only-if-idle \
-  --record-network ~/.browser-keepalive/logs/owa.ndjson \
+  --record-network ~/.config/outlook-gcal-mirror/logs/owa.ndjson \
   --record-include outlook.office.com
 
-node src/cli.js discover-owa-log --log ~/.browser-keepalive/logs/owa.ndjson --save-templates
+node src/cli.js discover-owa-log --log ~/.config/outlook-gcal-mirror/logs/owa.ndjson --save-templates
 ```
 
 If you use `--save-templates`, the file defaults to `~/.config/outlook-gcal-mirror/templates.json`. You can point to it via `outlook.owaTemplatesPath` in config.

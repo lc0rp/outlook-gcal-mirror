@@ -15,7 +15,7 @@ Monitor Outlook calendar events and mirror **real event details** into a dedicat
 
 - **No Outlook API / Graph access.**
 - Outlook must be accessed via **Outlook Web (OWA)** in a real logged-in browser session.
-- The tool must use [`browser-keepalive`](https://github.com/lc0rp/browser-keepalive) with **CDP** enabled to keep OWA open and controllable.
+- The tool must launch a CDP-enabled browser (via the built-in keepalive command) to keep OWA open and controllable.
 - Google Calendar writes use OAuth.
 - **Do not email any attendee** (no invitations, no updates).
 - Must support both **Playwright** and **Puppeteer** for CDP connection.
@@ -40,7 +40,7 @@ Two major components, kept logically separate:
 
 Purpose: read Outlook event details without relying on a first-party API.
 
-- Connect to a running Chromium instance via CDP (port provided by `browser-keepalive`).
+- Connect to a running Chromium instance via CDP (port provided by keepalive).
 - Prefer **calling the same internal JSON endpoints OWA uses**:
   - Execute `fetch()` inside the Outlook tab context so OWA cookies/session tokens apply.
   - Parse JSON into a normalized event model.

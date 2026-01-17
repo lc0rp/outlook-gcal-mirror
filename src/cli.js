@@ -13,6 +13,8 @@ import {
 	saveConfig,
 } from "./config.js";
 import { validateAbsoluteUrl, validateCdpPort, errorMessage } from "./utils.js";
+import { normalizePort } from "./keepalive/engines.js";
+import { resolveUserDataDir, runKeepalive } from "./keepalive/keepalive.js";
 import {
 	discoverOwaCandidates,
 	discoverOwaCandidatesFromLog,
@@ -41,6 +43,18 @@ function parsePositiveInt(value, label) {
 	const n = Number(value);
 	if (!Number.isInteger(n) || n <= 0) throw new UserError(`${label} must be a positive integer`);
 	return n;
+}
+
+function parsePositiveNumber(value, label) {
+	if (value === undefined || value === null || value === "") return null;
+	const n = Number(value);
+	if (!Number.isFinite(n) || n <= 0) throw new UserError(`${label} must be a positive number`);
+	return n;
+}
+
+function collectList(value, previous) {
+	if (!value) return previous ?? [];
+	return [...(previous ?? []), value];
 }
 
 /**
@@ -147,9 +161,64 @@ function buildProgram() {
 		.showHelpAfterError(true);
 
 	program
+		.command("keepalive")
+		.description("Launch a browser, load a URL, and periodically refresh it to keep it alive")
+		.option("--target-url <url>", "OWA calendar URL", DEFAULT_TARGET_URL)
+		.option("-i, --interval <seconds>", "Refresh interval in seconds", "60")
+		.option("--cache-bust", "Add cache-busting query param on each refresh (default: true)")
+		.option("--no-cache-bust", "Disable cache-busting query param")
+		.option("--always-reset", "Always navigate to the original URL instead of refreshing current page")
+		.option("--engine <engine>", "playwright|puppeteer", "playwright")
+		.option("--headless", "Run browser without visible window")
+		.option(
+			"--user-data-dir <dir>",
+			"Persist browser profile/cookies in this directory (defaults to ~/.config/outlook-gcal-mirror/chrome, falling back to ~/.browser-keepalive/chrome)"
+		)
+		.option("-p, --cdp-port <port>", "Enable Chrome DevTools Protocol on this port")
+		.option("--only-if-idle", "Only refresh when browser has been idle for the full interval")
+		.option("--record-network <path>", "Write NDJSON network log to this path")
+		.option(
+			"--record-include <substr>",
+			"Only record responses whose URL includes this substring (repeatable)",
+			collectList,
+			[]
+		)
+		.option("--record-max-bytes <bytes>", "Max response body bytes to store per entry", "1000000")
+		.option("--no-record-body", "Do not include response bodies in network log")
+		.action(async (opts) => {
+			const targetUrl = validateAbsoluteUrl(opts.targetUrl ?? DEFAULT_TARGET_URL);
+			const intervalSeconds = parsePositiveNumber(opts.interval, "--interval") ?? 60;
+			const engine = parseEngine(opts.engine);
+			const cdpPort = normalizePort(opts.cdpPort);
+			const userDataDir = resolveUserDataDir(opts.userDataDir);
+			const recordMaxBytes = parsePositiveInt(opts.recordMaxBytes, "--record-max-bytes") ?? 1000000;
+
+			const recordNetworkPath = opts.recordNetwork ? String(opts.recordNetwork).trim() : null;
+			const recordIncludes = Array.isArray(opts.recordInclude)
+				? opts.recordInclude.map((value) => String(value)).filter(Boolean)
+				: [];
+
+			await runKeepalive({
+				url: targetUrl,
+				intervalSeconds,
+				cacheBust: opts.cacheBust !== false,
+				alwaysReset: !!opts.alwaysReset,
+				engine,
+				headless: !!opts.headless,
+				userDataDir,
+				cdpPort,
+				onlyIfIdle: !!opts.onlyIfIdle,
+				recordNetworkPath,
+				recordIncludes,
+				recordMaxBytes,
+				recordBody: opts.recordBody !== false,
+			});
+		});
+
+	program
 		.command("setup")
 		.description("Write a config file (non-interactive)")
-		.option("-p, --cdp-port <port>", "CDP port (where browser-keepalive exposed CDP)")
+		.option("-p, --cdp-port <port>", "CDP port (where keepalive exposes CDP)")
 		.option("--engine <engine>", "playwright|puppeteer", "playwright")
 		.option("--target-url <url>", "OWA calendar URL", DEFAULT_TARGET_URL)
 		.option("--google-credentials <path>", "Google OAuth credentials JSON (Installed app)")
@@ -249,8 +318,8 @@ function buildProgram() {
 
 	program
 		.command("discover-owa-log")
-		.description("Scan a browser-keepalive NDJSON log and print candidate JSON endpoints")
-		.option("--log <path>", "Path to browser-keepalive NDJSON log")
+		.description("Scan an NDJSON network log and print candidate JSON endpoints")
+		.option("--log <path>", "Path to NDJSON network log")
 		.option("--min-score <n>", "Minimum JSON key score", "3")
 		.option(
 			"--url-includes <substr>",

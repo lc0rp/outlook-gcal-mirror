@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { access } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -33,6 +32,14 @@ function envBool(name, fallback = false) {
 	return ["1", "true", "yes", "on"].includes(raw.toLowerCase());
 }
 
+function splitList(raw) {
+	if (!raw) return [];
+	return String(raw)
+		.split(",")
+		.map((value) => value.trim())
+		.filter(Boolean);
+}
+
 function delay(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -60,20 +67,6 @@ async function runCli(args) {
 	await run(process.execPath, [path.join(repoRoot, "src", "cli.js"), ...args], {
 		cwd: repoRoot,
 	});
-}
-
-const bkDir = envString("BK_DIR", envString("BROWSER_KEEPALIVE_DIR", ""));
-if (!bkDir) {
-	console.error("Missing BK_DIR. Example: BK_DIR=/home/user/Documents/dev/browser-keepalive");
-	process.exit(1);
-}
-
-const bkCli = path.join(path.resolve(bkDir), "src", "cli.js");
-try {
-	await access(bkCli);
-} catch {
-	console.error(`browser-keepalive CLI not found at ${bkCli}`);
-	process.exit(1);
 }
 
 const configPath = envString("OGM_CONFIG", DEFAULT_CONFIG_PATH);
@@ -161,10 +154,37 @@ process.on("exit", cleanup);
 
 try {
 	if (!skipBk) {
-		const bkArgs = [bkCli, targetUrl];
+		const bkArgs = [
+			path.join(repoRoot, "src", "cli.js"),
+			"keepalive",
+			"--target-url",
+			targetUrl,
+			"--engine",
+			engine,
+		];
 		if (onlyIfIdle) bkArgs.push("--only-if-idle");
 		bkArgs.push("-i", String(idleMinutes), "-p", String(cdpPort));
-		bkProc = spawn(process.execPath, bkArgs, { stdio: "inherit", cwd: bkDir });
+
+		const userDataDir = envString("BK_USER_DATA_DIR", "");
+		if (userDataDir) {
+			bkArgs.push("--user-data-dir", userDataDir);
+		}
+
+		const recordNetwork = envString("BK_RECORD_NETWORK", "");
+		if (recordNetwork) {
+			bkArgs.push("--record-network", recordNetwork);
+		}
+
+		const recordIncludes = splitList(envString("BK_RECORD_INCLUDE", ""));
+		for (const include of recordIncludes) {
+			bkArgs.push("--record-include", include);
+		}
+
+		if (envBool("BK_HEADLESS", false)) {
+			bkArgs.push("--headless");
+		}
+
+		bkProc = spawn(process.execPath, bkArgs, { stdio: "inherit", cwd: repoRoot });
 		await delay(waitMs);
 	}
 
