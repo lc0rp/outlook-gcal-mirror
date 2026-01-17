@@ -21,6 +21,22 @@ describe("extractOutlookEventsFromJson", () => {
 		expect(events[0].attendeeNames).toEqual(["Alice", "Bob"]);
 	});
 
+	test("extracts mailbox attendees from RequiredAttendees", () => {
+		const json = {
+			Subject: "Mailbox Attendees",
+			Start: "2026-01-02T10:00:00Z",
+			End: "2026-01-02T10:30:00Z",
+			RequiredAttendees: [
+				{ Mailbox: { Name: "Example User", EmailAddress: "user@example.com" } },
+				{ Mailbox: { EmailAddress: "someone@example.com" } },
+			],
+		};
+
+		const events = extractOutlookEventsFromJson(json);
+		expect(events).toHaveLength(1);
+		expect(events[0].attendeeNames).toEqual(["Example User", "someone@example.com"]);
+	});
+
 	test("finds events nested in arrays/objects and de-dupes", () => {
 		const event = {
 			subject: "Planning",

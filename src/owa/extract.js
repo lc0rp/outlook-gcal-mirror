@@ -92,6 +92,34 @@ function extractAttendeeNames(value) {
 			pushName(v.Name ?? v.name ?? v.DisplayName ?? v.displayName);
 			pushName(v.EmailAddress?.Name ?? v.EmailAddress?.name);
 			if (v.EmailAddress && typeof v.EmailAddress === "string") pushName(v.EmailAddress);
+
+			const mailbox = v.Mailbox;
+			if (mailbox && isObject(mailbox)) {
+				const mailboxName =
+					mailbox.Name ??
+					mailbox.DisplayName ??
+					mailbox.name ??
+					mailbox.displayName ??
+					null;
+				if (mailboxName) {
+					pushName(mailboxName);
+				} else if (mailbox.EmailAddress) {
+					if (isObject(mailbox.EmailAddress)) {
+						pushName(
+							mailbox.EmailAddress.Name ??
+							mailbox.EmailAddress.Address ??
+							mailbox.EmailAddress.address ??
+							mailbox.EmailAddress.name
+						);
+					} else {
+						pushName(mailbox.EmailAddress);
+					}
+				} else {
+					pushName(
+						mailbox.Address ?? mailbox.address ?? mailbox.emailAddress ?? mailbox.Email
+					);
+				}
+			}
 			if (v.Attendee && isObject(v.Attendee)) {
 				pushName(v.Attendee.Name ?? v.Attendee.DisplayName);
 			}
@@ -159,7 +187,7 @@ export function extractOutlookEventsFromJson(json) {
 					subject,
 					start,
 					end,
-					attendeeNames,
+					organizerEmail,
 				});
 
 			events.push({
