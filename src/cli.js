@@ -57,6 +57,24 @@ function collectList(value, previous) {
 	return [...(previous ?? []), value];
 }
 
+function formatEventTimestamp(value) {
+	if (!value || typeof value !== "object") return "";
+	if ("dateTime" in value && value.dateTime) {
+		return value.timeZone ? `${value.dateTime} ${value.timeZone}` : value.dateTime;
+	}
+	if ("date" in value && value.date) {
+		return value.date;
+	}
+	return "";
+}
+
+function formatEventSummary(ev) {
+	const start = formatEventTimestamp(ev.start) || "?";
+	const end = formatEventTimestamp(ev.end) || "?";
+	const subject = ev.subject ? String(ev.subject) : "(untitled)";
+	return `${start} → ${end} | ${subject}`;
+}
+
 /**
  * @param {unknown} value
  * @returns {"playwright" | "puppeteer"}
@@ -501,6 +519,7 @@ function buildProgram() {
 		.option("--lookback-days <n>", "Days back to include when listing mirror events", "1")
 		.option("--mark-cancelled", "Mark missing mirrored events as CANCELLED")
 		.option("--dry-run", "Do not write to Google; print what would happen")
+		.option("--no-log-events", "Disable per-event logging")
 		.action(async (opts) => {
 			const cfgPath = program.opts().config;
 			/** @type {import('./config.js').MirrorConfig | null} */
@@ -528,6 +547,7 @@ function buildProgram() {
 			const calendarName = String(opts.calendarName ?? cfg?.google?.calendarName ?? "Outlook Mirror");
 
 			const markCancelled = opts.markCancelled !== undefined ? !!opts.markCancelled : !!cfg?.sync?.markCancelled;
+			const logEvents = opts.logEvents !== false;
 
 			if (!opts.dryRun && !credentialsPath) {
 				throw new UserError(
@@ -584,11 +604,16 @@ function buildProgram() {
 
 				console.info(`Extracted ${events.length} event(s) after filtering.`);
 
-				if (opts.dryRun) {
-					for (const ev of events.slice(0, 30)) {
-						console.info(`DRY RUN: would mirror: ${ev.subject} [${ev.sourceKey}]`);
+				if (logEvents) {
+					for (const ev of events) {
+						console.info(`PULL: ${formatEventSummary(ev)}`);
 					}
-					if (events.length > 30) console.info(`…and ${events.length - 30} more`);
+				}
+
+				if (opts.dryRun) {
+					for (const ev of events) {
+						console.info(`DRY RUN: would mirror: ${formatEventSummary(ev)} [${ev.sourceKey}]`);
+					}
 					return;
 				}
 
@@ -604,6 +629,9 @@ function buildProgram() {
 					const res = await upsertMirroredEvent({ calendar, calendarId, ev });
 					if (res.action === "created") created += 1;
 					if (res.action === "updated") updated += 1;
+					if (logEvents) {
+						console.info(`SYNC (${res.action}): ${formatEventSummary(ev)}`);
+					}
 				}
 
 				console.info(`Upsert complete. created=${created} updated=${updated}`);
