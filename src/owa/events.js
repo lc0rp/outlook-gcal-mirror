@@ -174,6 +174,36 @@ export function applyRangeToRequestBody(body, range) {
 	return { body: updated, matched: state.matched, parsed };
 }
 
+function rangeValueForKey(normalizedKey, iso) {
+	if (normalizedKey.includes("date") && !normalizedKey.includes("datetime")) {
+		return iso.slice(0, 10);
+	}
+	return iso;
+}
+
+export function applyRangeToRequestUrl(urlString, range) {
+	if (!urlString) return { url: urlString, matched: 0 };
+	let matched = 0;
+	try {
+		const url = new URL(urlString);
+		for (const key of url.searchParams.keys()) {
+			const normalized = normalizeKey(key);
+			if (RANGE_START_KEYS.has(normalized)) {
+				url.searchParams.set(key, rangeValueForKey(normalized, range.start.toISOString()));
+				matched += 1;
+				continue;
+			}
+			if (RANGE_END_KEYS.has(normalized)) {
+				url.searchParams.set(key, rangeValueForKey(normalized, range.end.toISOString()));
+				matched += 1;
+			}
+		}
+		return { url: url.toString(), matched };
+	} catch {
+		return { url: urlString, matched: 0 };
+	}
+}
+
 /**
  * @param {{ page: any, template: OwaRequestTemplate, range: { start: Date, end: Date }, templateVars?: Record<string,string> }} opts
  */
@@ -311,12 +341,15 @@ export async function fetchOwaEventsByTemplate({ page, template, range, template
 	const vars = await resolveTemplateVars({ page, template, range, templateVars });
 	const req = applyTemplate({ template, vars });
 	const rangeResult = applyRangeToRequestBody(req.body, range);
+	const urlRangeResult = applyRangeToRequestUrl(req.url, range);
 	const requestWithRange = {
 		...req,
+		url: urlRangeResult.url,
 		body: rangeResult.body,
 	};
-	if (!rangeResult.matched && !templateContainsPlaceholder(template, "start") && !templateContainsPlaceholder(template, "end")) {
-		console.info("Note: request template does not include start/end placeholders; using captured range if present.");
+	const matchedRangeKeys = rangeResult.matched + urlRangeResult.matched;
+	if (!matchedRangeKeys && !templateContainsPlaceholder(template, "start") && !templateContainsPlaceholder(template, "end")) {
+		console.info("Note: request template does not include start/end placeholders or range keys; using captured range if present.");
 	}
 	const json = await owaFetchJson(page, requestWithRange);
 	return extractOutlookEventsFromJson(json);
@@ -352,12 +385,15 @@ export async function fetchOwaEventsByTemplates({
 	const viewVars = await resolveTemplateVars({ page, template: viewTemplate, range, templateVars });
 	const viewReq = applyTemplate({ template: viewTemplate, vars: viewVars });
 	const viewRangeResult = applyRangeToRequestBody(viewReq.body, range);
+	const viewUrlRangeResult = applyRangeToRequestUrl(viewReq.url, range);
 	const viewRequestWithRange = {
 		...viewReq,
+		url: viewUrlRangeResult.url,
 		body: viewRangeResult.body,
 	};
-	if (!viewRangeResult.matched && !templateContainsPlaceholder(viewTemplate, "start") && !templateContainsPlaceholder(viewTemplate, "end")) {
-		console.info("Note: view template does not include start/end placeholders; using captured range if present.");
+	const viewMatchedRangeKeys = viewRangeResult.matched + viewUrlRangeResult.matched;
+	if (!viewMatchedRangeKeys && !templateContainsPlaceholder(viewTemplate, "start") && !templateContainsPlaceholder(viewTemplate, "end")) {
+		console.info("Note: view template does not include start/end placeholders or range keys; using captured range if present.");
 	}
 	const viewJson = await owaFetchJson(page, viewRequestWithRange);
 	const viewEvents = extractOutlookEventsFromJson(viewJson);
