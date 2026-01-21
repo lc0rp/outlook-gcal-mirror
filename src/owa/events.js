@@ -81,6 +81,99 @@ function chunk(items, size) {
 	return out;
 }
 
+const RANGE_START_KEYS = new Set([
+	"start",
+	"startdate",
+	"startdatetime",
+	"starttime",
+	"startutc",
+	"startdateutc",
+	"startdatetimeutc",
+	"viewstart",
+	"from",
+]);
+
+const RANGE_END_KEYS = new Set([
+	"end",
+	"enddate",
+	"enddatetime",
+	"endtime",
+	"endutc",
+	"enddateutc",
+	"enddatetimeutc",
+	"viewend",
+	"to",
+]);
+
+function normalizeKey(key) {
+	return String(key ?? "").trim().toLowerCase();
+}
+
+function applyRangeToValue(value, iso) {
+	if (!value || typeof value !== "object") {
+		return iso;
+	}
+
+	const out = Array.isArray(value) ? [...value] : { ...value };
+	if ("DateTime" in out) out.DateTime = iso;
+	if ("dateTime" in out) out.dateTime = iso;
+	if ("date" in out) out.date = iso.slice(0, 10);
+	if ("Date" in out) out.Date = iso.slice(0, 10);
+	return out;
+}
+
+function applyRangeToNode(node, startIso, endIso, state) {
+	if (Array.isArray(node)) {
+		return node.map((item) => applyRangeToNode(item, startIso, endIso, state));
+	}
+	if (!node || typeof node !== "object") return node;
+
+	const out = Array.isArray(node) ? [...node] : { ...node };
+	for (const [key, value] of Object.entries(node)) {
+		const normalized = normalizeKey(key);
+		if (RANGE_START_KEYS.has(normalized)) {
+			out[key] = applyRangeToValue(value, startIso);
+			state.matched += 1;
+			continue;
+		}
+		if (RANGE_END_KEYS.has(normalized)) {
+			out[key] = applyRangeToValue(value, endIso);
+			state.matched += 1;
+			continue;
+		}
+		out[key] = applyRangeToNode(value, startIso, endIso, state);
+	}
+	return out;
+}
+
+function parseJsonBody(body) {
+	if (typeof body !== "string") return { parsed: false, value: body };
+	const parsed = tryParseJsonString(body);
+	if (!parsed) return { parsed: false, value: body };
+	return { parsed: true, value: parsed };
+}
+
+export function applyRangeToRequestBody(body, range) {
+	if (body === undefined || body === null) {
+		return { body, matched: 0, parsed: false };
+	}
+	const { parsed, value } = parseJsonBody(body);
+	if (!value || typeof value !== "object") {
+		return { body, matched: 0, parsed };
+	}
+
+	const state = { matched: 0 };
+	const startIso = range.start.toISOString();
+	const endIso = range.end.toISOString();
+	const updated = applyRangeToNode(value, startIso, endIso, state);
+
+	if (!state.matched) {
+		return { body, matched: 0, parsed };
+	}
+
+	return { body: updated, matched: state.matched, parsed };
+}
+
 /**
  * @param {{ page: any, template: OwaRequestTemplate, range: { start: Date, end: Date }, templateVars?: Record<string,string> }} opts
  */
@@ -217,7 +310,15 @@ export async function fetchOwaEventsByTemplate({ page, template, range, template
 
 	const vars = await resolveTemplateVars({ page, template, range, templateVars });
 	const req = applyTemplate({ template, vars });
-	const json = await owaFetchJson(page, req);
+	const rangeResult = applyRangeToRequestBody(req.body, range);
+	const requestWithRange = {
+		...req,
+		body: rangeResult.body,
+	};
+	if (!rangeResult.matched && !templateContainsPlaceholder(template, "start") && !templateContainsPlaceholder(template, "end")) {
+		console.info("Note: request template does not include start/end placeholders; using captured range if present.");
+	}
+	const json = await owaFetchJson(page, requestWithRange);
 	return extractOutlookEventsFromJson(json);
 }
 
@@ -250,7 +351,15 @@ export async function fetchOwaEventsByTemplates({
 
 	const viewVars = await resolveTemplateVars({ page, template: viewTemplate, range, templateVars });
 	const viewReq = applyTemplate({ template: viewTemplate, vars: viewVars });
-	const viewJson = await owaFetchJson(page, viewReq);
+	const viewRangeResult = applyRangeToRequestBody(viewReq.body, range);
+	const viewRequestWithRange = {
+		...viewReq,
+		body: viewRangeResult.body,
+	};
+	if (!viewRangeResult.matched && !templateContainsPlaceholder(viewTemplate, "start") && !templateContainsPlaceholder(viewTemplate, "end")) {
+		console.info("Note: view template does not include start/end placeholders; using captured range if present.");
+	}
+	const viewJson = await owaFetchJson(page, viewRequestWithRange);
 	const viewEvents = extractOutlookEventsFromJson(viewJson);
 
 	if (!eventTemplate) return viewEvents;
