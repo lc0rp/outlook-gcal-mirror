@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { applyRangeToRequestBody, applyRangeToRequestUrl } from "./events.js";
+import { applyRangeToRequestBody, applyRangeToRequestHeaders, applyRangeToRequestUrl } from "./events.js";
 
 describe("applyRangeToRequestBody", () => {
 	it("overrides common start/end keys in object bodies", () => {
@@ -56,5 +56,28 @@ describe("applyRangeToRequestBody", () => {
 		expect(res.url).toContain("StartDate=2026-01-21");
 		expect(res.url).toContain("EndDate=2026-02-04");
 		expect(res.url).toContain(`StartDateTime=${encodeURIComponent(range.start.toISOString())}`);
+	});
+
+	it("updates URL-encoded JSON headers", () => {
+		const range = {
+			start: new Date("2026-01-21T00:00:00.000Z"),
+			end: new Date("2026-02-04T00:00:00.000Z"),
+		};
+
+		const headerJson = {
+			Body: {
+				RangeStart: "2025-11-10T00:00:00.000Z",
+				RangeEnd: "2026-01-16T00:00:00.000Z",
+			},
+		};
+		const headers = {
+			"x-owa-urlpostdata": encodeURIComponent(JSON.stringify(headerJson)),
+		};
+
+		const res = applyRangeToRequestHeaders(headers, range);
+		expect(res.matched).toBeGreaterThan(0);
+		const decoded = JSON.parse(decodeURIComponent(res.headers["x-owa-urlpostdata"]));
+		expect(decoded.Body.RangeStart).toBe(range.start.toISOString());
+		expect(decoded.Body.RangeEnd).toBe(range.end.toISOString());
 	});
 });

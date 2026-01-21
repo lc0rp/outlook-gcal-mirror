@@ -90,6 +90,7 @@ const RANGE_START_KEYS = new Set([
 	"startdateutc",
 	"startdatetimeutc",
 	"viewstart",
+	"rangestart",
 	"from",
 ]);
 
@@ -102,6 +103,7 @@ const RANGE_END_KEYS = new Set([
 	"enddateutc",
 	"enddatetimeutc",
 	"viewend",
+	"rangeend",
 	"to",
 ]);
 
@@ -153,6 +155,31 @@ function parseJsonBody(body) {
 	return { parsed: true, value: parsed };
 }
 
+function parseJsonHeader(value) {
+	if (typeof value !== "string") return { parsed: false, value };
+	let decoded = value;
+	let wasEncoded = false;
+	try {
+		decoded = decodeURIComponent(value);
+		wasEncoded = decoded !== value;
+	} catch {
+		decoded = value;
+		wasEncoded = false;
+	}
+
+	const parsedDecoded = tryParseJsonString(decoded);
+	if (parsedDecoded && typeof parsedDecoded === "object") {
+		return { parsed: true, value: parsedDecoded, encoded: wasEncoded };
+	}
+
+	const parsedRaw = tryParseJsonString(value);
+	if (parsedRaw && typeof parsedRaw === "object") {
+		return { parsed: true, value: parsedRaw, encoded: false };
+	}
+
+	return { parsed: false, value };
+}
+
 export function applyRangeToRequestBody(body, range) {
 	if (body === undefined || body === null) {
 		return { body, matched: 0, parsed: false };
@@ -202,6 +229,30 @@ export function applyRangeToRequestUrl(urlString, range) {
 	} catch {
 		return { url: urlString, matched: 0 };
 	}
+}
+
+export function applyRangeToRequestHeaders(headers, range) {
+	if (!headers || typeof headers !== "object") return { headers, matched: 0 };
+	const startIso = range.start.toISOString();
+	const endIso = range.end.toISOString();
+	let matched = 0;
+	const out = { ...headers };
+
+	for (const [key, value] of Object.entries(headers)) {
+		if (typeof value !== "string") continue;
+		const parsed = parseJsonHeader(value);
+		if (!parsed.parsed || !parsed.value || typeof parsed.value !== "object") continue;
+
+		const state = { matched: 0 };
+		const updated = applyRangeToNode(parsed.value, startIso, endIso, state);
+		if (!state.matched) continue;
+
+		matched += state.matched;
+		const serialized = JSON.stringify(updated);
+		out[key] = parsed.encoded ? encodeURIComponent(serialized) : serialized;
+	}
+
+	return { headers: out, matched };
 }
 
 /**
@@ -342,12 +393,14 @@ export async function fetchOwaEventsByTemplate({ page, template, range, template
 	const req = applyTemplate({ template, vars });
 	const rangeResult = applyRangeToRequestBody(req.body, range);
 	const urlRangeResult = applyRangeToRequestUrl(req.url, range);
+	const headerRangeResult = applyRangeToRequestHeaders(req.headers ?? {}, range);
 	const requestWithRange = {
 		...req,
 		url: urlRangeResult.url,
+		headers: headerRangeResult.headers,
 		body: rangeResult.body,
 	};
-	const matchedRangeKeys = rangeResult.matched + urlRangeResult.matched;
+	const matchedRangeKeys = rangeResult.matched + urlRangeResult.matched + headerRangeResult.matched;
 	if (!matchedRangeKeys && !templateContainsPlaceholder(template, "start") && !templateContainsPlaceholder(template, "end")) {
 		console.info("Note: request template does not include start/end placeholders or range keys; using captured range if present.");
 	}
@@ -386,12 +439,15 @@ export async function fetchOwaEventsByTemplates({
 	const viewReq = applyTemplate({ template: viewTemplate, vars: viewVars });
 	const viewRangeResult = applyRangeToRequestBody(viewReq.body, range);
 	const viewUrlRangeResult = applyRangeToRequestUrl(viewReq.url, range);
+	const viewHeaderRangeResult = applyRangeToRequestHeaders(viewReq.headers ?? {}, range);
 	const viewRequestWithRange = {
 		...viewReq,
 		url: viewUrlRangeResult.url,
+		headers: viewHeaderRangeResult.headers,
 		body: viewRangeResult.body,
 	};
-	const viewMatchedRangeKeys = viewRangeResult.matched + viewUrlRangeResult.matched;
+	const viewMatchedRangeKeys =
+		viewRangeResult.matched + viewUrlRangeResult.matched + viewHeaderRangeResult.matched;
 	if (!viewMatchedRangeKeys && !templateContainsPlaceholder(viewTemplate, "start") && !templateContainsPlaceholder(viewTemplate, "end")) {
 		console.info("Note: view template does not include start/end placeholders or range keys; using captured range if present.");
 	}
