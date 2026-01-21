@@ -5,6 +5,57 @@ import { cancelledSummary, buildGoogleDescription } from "./format.js";
 export const PRIVATE_SOURCE_KEY = "ogm.sourceKey";
 export const PRIVATE_STATUS = "ogm.status";
 
+
+function normalizeSummary(summary) {
+	if (!summary) return "";
+	return String(summary).trim().toLowerCase();
+}
+
+function normalizeEventTime(value) {
+	if (!value) return "";
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		const d = new Date(trimmed);
+		return Number.isNaN(d.getTime()) ? trimmed : d.toISOString();
+	}
+	if (typeof value !== "object") return "";
+
+	const date = value.date ?? value.Date;
+	if (typeof date === "string" && date.trim()) return date.trim();
+
+	const dateTime = value.dateTime ?? value.DateTime;
+	if (typeof dateTime === "string" && dateTime.trim()) {
+		const trimmed = dateTime.trim();
+		const d = new Date(trimmed);
+		if (!Number.isNaN(d.getTime())) return d.toISOString();
+		const timeZone = value.timeZone ?? value.TimeZone;
+		return timeZone ? `${trimmed}|${timeZone}` : trimmed;
+	}
+
+	return "";
+}
+
+function buildEventIdentity({ summary, start, end }) {
+	const summaryKey = normalizeSummary(summary);
+	const startKey = normalizeEventTime(start);
+	const endKey = normalizeEventTime(end);
+	if (!summaryKey || !startKey || !endKey) return "";
+	return `${summaryKey}|${startKey}|${endKey}`;
+}
+
+function findEventByIdentity(items, identity) {
+	if (!identity) return null;
+	for (const item of items ?? []) {
+		const itemIdentity = buildEventIdentity({
+			summary: item?.summary,
+			start: item?.start,
+			end: item?.end,
+		});
+		if (itemIdentity && itemIdentity === identity) return item;
+	}
+	return null;
+}
+
 /**
  * @param {any} calendar
  * @param {string} calendarName
@@ -75,7 +126,25 @@ export async function upsertMirroredEvent({ calendar, calendarId, ev }) {
 		privateExtendedProperty: `${PRIVATE_SOURCE_KEY}=${ev.sourceKey}`,
 	});
 
-	const existing = (res.data.items ?? [])[0] ?? null;
+	let existing = (res.data.items ?? [])[0] ?? null;
+	if (!existing) {
+		const identity = buildEventIdentity({
+			summary: ev.subject,
+			start: ev.start,
+			end: ev.end,
+		});
+		if (identity) {
+			const fallbackRes = await calendar.events.list({
+				calendarId,
+				timeMin,
+				timeMax,
+				singleEvents: true,
+				maxResults: 50,
+			});
+			existing = findEventByIdentity(fallbackRes.data.items ?? [], identity);
+		}
+	}
+
 	const description = buildGoogleDescription(ev);
 
 	const requestBody = {
