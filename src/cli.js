@@ -36,7 +36,12 @@ import {
 	PRIVATE_SOURCE_KEY,
 } from "./sync/google.js";
 
-const DEFAULT_TARGET_URL = "https://outlook.office.com/calendar/view/week";
+const DEFAULT_TARGET_URLS = [
+	"https://outlook.office.com/calendar/view/week",
+	"https://outlook.cloud.microsoft/calendar/view/week",
+];
+const DEFAULT_TARGET_URL = DEFAULT_TARGET_URLS[0];
+const TARGET_HOST_SUFFIXES = ["office.com", "cloud.microsoft"];
 
 /**
  * @param {unknown} value
@@ -124,6 +129,30 @@ async function waitForCdpReady({ port, timeoutMs }) {
 	throw lastErr ?? new Error(`Timed out waiting for CDP at ${url}`);
 }
 
+function normalizeTargetUrlForMatch(url) {
+	if (!url) return null;
+	try {
+		const parsed = new URL(url);
+		parsed.search = "";
+		parsed.hash = "";
+		return parsed.toString();
+	} catch {
+		return null;
+	}
+}
+
+function isAllowedTargetHost(host, targetUrl) {
+	if (!host) return false;
+	if (targetUrl) {
+		try {
+			if (new URL(targetUrl).host === host) return true;
+		} catch {
+			// ignore
+		}
+	}
+	return TARGET_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
 function shouldWaitForLogin(url, targetUrl) {
 	if (!url) return true;
 	const lower = String(url).toLowerCase();
@@ -137,9 +166,8 @@ function shouldWaitForLogin(url, targetUrl) {
 		return true;
 	}
 	try {
-		const targetHost = new URL(targetUrl).host;
 		const pageHost = new URL(url).host;
-		if (targetHost && pageHost && targetHost !== pageHost) return true;
+		if (!isAllowedTargetHost(pageHost, targetUrl)) return true;
 	} catch {
 		// ignore
 	}
@@ -155,7 +183,12 @@ async function waitForOutlookLogin({ engine, port, targetUrl, timeoutMs }) {
 			const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
 			lastUrl = pageUrl ?? null;
 			await disconnectBestEffort(conn.browser);
-			if (!shouldWaitForLogin(pageUrl, targetUrl)) return;
+			if (!shouldWaitForLogin(pageUrl, targetUrl)) {
+				return (
+					normalizeTargetUrlForMatch(pageUrl) ??
+					normalizeTargetUrlForMatch(targetUrl)
+				);
+			}
 		} catch {
 			// ignore; we'll retry until timeout
 		}
@@ -621,6 +654,7 @@ function buildProgram() {
 			const cdpPort = validateCdpPort(opts.cdpPort ?? cfg?.outlook?.cdpPort ?? 9222);
 			const engine = parseEngine(opts.engine ?? cfg?.outlook?.engine ?? "playwright");
 			const targetUrl = validateAbsoluteUrl(opts.targetUrl ?? cfg?.outlook?.targetUrl ?? DEFAULT_TARGET_URL);
+			let effectiveTargetUrl = targetUrl;
 			const source = parseSource(opts.source);
 
 			const captureMs = parsePositiveInt(opts.captureMs, "--capture-ms") ?? 15000;
@@ -688,12 +722,20 @@ function buildProgram() {
 					await waitForCdpReady({ port: cdpPort, timeoutMs: ensureCdpTimeoutMs });
 				}
 
-				await waitForOutlookLogin({ engine, port: cdpPort, targetUrl, timeoutMs: ensureCdpTimeoutMs });
+				const resolvedTargetUrl = await waitForOutlookLogin({
+					engine,
+					port: cdpPort,
+					targetUrl,
+					timeoutMs: ensureCdpTimeoutMs,
+				});
+				if (resolvedTargetUrl) {
+					effectiveTargetUrl = resolvedTargetUrl;
+				}
 			}
 
 			let conn = null;
 			try {
-				conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
+				conn = await connectOverCdp({ engine, port: cdpPort, targetUrl: effectiveTargetUrl });
 				try {
 					const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
 					console.info(`Using tab: ${pageUrl}`);
