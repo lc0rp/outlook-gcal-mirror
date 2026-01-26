@@ -100,16 +100,19 @@ function findEventByIdentity(items, identity) {
 
 /**
  * @param {any} calendar
- * @param {string} calendarName
+ * @param {string} calendarRef
  */
-export async function ensureMirrorCalendar({ calendar, calendarName }) {
+export async function ensureMirrorCalendar({ calendar, calendarRef }) {
 	const res = await calendar.calendarList.list();
 	const items = res.data.items ?? [];
-	const found = items.find((c) => (c.summary ?? "").trim() === calendarName);
-	if (found?.id) return found.id;
+	const desired = typeof calendarRef === "string" && calendarRef.trim() ? calendarRef.trim() : "Outlook Mirror";
+	const foundById = items.find((c) => c.id === desired);
+	if (foundById?.id) return foundById.id;
+	const foundByName = items.find((c) => (c.summary ?? "").trim() === desired);
+	if (foundByName?.id) return foundByName.id;
 
 	const created = await calendar.calendars.insert({
-		requestBody: { summary: calendarName, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+		requestBody: { summary: desired, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
 	});
 
 	if (!created.data.id) throw new UserError("Failed to create mirror calendar");
@@ -143,11 +146,11 @@ export async function listMirrorEvents({ calendar, calendarId, timeMin, timeMax 
 }
 
 /**
- * @param {{ credentialsPath: string, tokenPath: string, calendarName: string }} opts
+ * @param {{ credentialsPath: string, tokenPath: string, calendarRef: string }} opts
  */
-export async function getGoogleSyncContext({ credentialsPath, tokenPath, calendarName }) {
+export async function getGoogleSyncContext({ credentialsPath, tokenPath, calendarRef }) {
 	const { calendar } = await getGoogleCalendarClient({ credentialsPath, tokenPath });
-	const calendarId = await ensureMirrorCalendar({ calendar, calendarName });
+	const calendarId = await ensureMirrorCalendar({ calendar, calendarRef });
 	return { calendar, calendarId };
 }
 

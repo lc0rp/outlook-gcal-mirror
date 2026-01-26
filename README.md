@@ -147,7 +147,7 @@ node src/cli.js sync \
   --source capture \
   --capture-ms 30000 \
   --google-credentials /path/to/client_secret.json \
-  --calendar-name "Outlook Mirror" \
+  --calendar "Outlook Mirror" \
   --window-days 14
 ```
 
@@ -159,12 +159,13 @@ node src/cli.js sync \
   --engine playwright \
   --source template \
   --google-credentials /path/to/client_secret.json \
-  --calendar-name "Outlook Mirror" \
+  --calendar "Outlook Mirror" \
   --window-days 14
 ```
 
 Notes:
 
+- `--calendar` accepts a calendar id or name; id match is attempted first. Default: `Outlook Mirror`.
 - Capture mode only sees what OWA loads during the capture window. If you need more coverage, increase `--capture-ms` and navigate weeks while it runs.
 - Only use `--mark-cancelled` in capture mode if you’re confident the capture covered the full time window.
 

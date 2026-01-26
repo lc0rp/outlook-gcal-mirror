@@ -241,7 +241,8 @@ function buildProgram() {
 		.option("--target-url <url>", "OWA calendar URL", DEFAULT_TARGET_URL)
 		.option("--google-credentials <path>", "Google OAuth credentials JSON (Installed app)")
 		.option("--google-token <path>", "Google token JSON path", DEFAULT_TOKEN_PATH)
-		.option("--calendar-name <name>", "Destination Google calendar", "Outlook Mirror")
+		.option("--calendar <idOrName>", "Destination Google calendar (id or name)")
+		.option("--calendar-name <name>", "Deprecated: use --calendar")
 		.option("--window-days <n>", "Days ahead to mirror", "14")
 		.option("--mark-cancelled", "Mark missing mirrored events as CANCELLED (unsafe unless full window captured)")
 		.action(async (opts) => {
@@ -253,7 +254,7 @@ function buildProgram() {
 
 			const credentialsPath = normalizePath(opts.googleCredentials);
 			const tokenPath = normalizePath(opts.googleToken) ?? DEFAULT_TOKEN_PATH;
-			const calendarName = String(opts.calendarName ?? "Outlook Mirror");
+			const calendarRef = String(opts.calendar ?? opts.calendarName ?? "Outlook Mirror");
 			const windowDays = parsePositiveInt(opts.windowDays, "--window-days") ?? 14;
 
 			/** @type {import('./config.js').MirrorConfig} */
@@ -266,7 +267,7 @@ function buildProgram() {
 				google: {
 					credentialsPath: credentialsPath ?? "",
 					tokenPath,
-					calendarName,
+					calendarName: calendarRef,
 				},
 				sync: {
 					windowDays,
@@ -514,7 +515,8 @@ function buildProgram() {
 		.option("--no-url-filter", "Do not filter responses by URL (capture source only)")
 		.option("--google-credentials <path>", "Google OAuth credentials JSON (overrides config)")
 		.option("--google-token <path>", "Google token JSON path (overrides config)")
-		.option("--calendar-name <name>", "Destination Google calendar (overrides config)")
+		.option("--calendar <idOrName>", "Destination Google calendar (id or name; overrides config)")
+		.option("--calendar-name <name>", "Deprecated: use --calendar")
 		.option("--window-days <n>", "Days ahead to mirror (overrides config)")
 		.option("--lookback-days <n>", "Days back to include when listing mirror events", "1")
 		.option("--mark-cancelled", "Mark missing mirrored events as CANCELLED")
@@ -544,7 +546,9 @@ function buildProgram() {
 
 			const credentialsPath = normalizePath(opts.googleCredentials ?? cfg?.google?.credentialsPath) ?? null;
 			const tokenPath = normalizePath(opts.googleToken ?? cfg?.google?.tokenPath) ?? DEFAULT_TOKEN_PATH;
-			const calendarName = String(opts.calendarName ?? cfg?.google?.calendarName ?? "Outlook Mirror");
+			const calendarRef = String(
+				opts.calendar ?? opts.calendarName ?? cfg?.google?.calendarId ?? cfg?.google?.calendarName ?? "Outlook Mirror"
+			);
 
 			const markCancelled = opts.markCancelled !== undefined ? !!opts.markCancelled : !!cfg?.sync?.markCancelled;
 			const logEvents = opts.logEvents !== false;
@@ -620,7 +624,7 @@ function buildProgram() {
 				const { calendar, calendarId } = await getGoogleSyncContext({
 					credentialsPath: /** @type {string} */ (credentialsPath),
 					tokenPath,
-					calendarName,
+					calendarRef,
 				});
 
 				let created = 0;

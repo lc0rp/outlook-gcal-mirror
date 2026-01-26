@@ -124,7 +124,7 @@ if (envBool("OGM_NO_URL_FILTER", false)) {
 const syncExtraArgs = [];
 optionalArgs("--google-credentials", envString("OGM_GOOGLE_CREDS", ""), syncExtraArgs);
 optionalArgs("--google-token", envString("OGM_GOOGLE_TOKEN", ""), syncExtraArgs);
-optionalArgs("--calendar-name", envString("OGM_CALENDAR_NAME", ""), syncExtraArgs);
+optionalArgs("--calendar", envString("OGM_CALENDAR_NAME", ""), syncExtraArgs);
 if (envBool("OGM_MARK_CANCELLED", false)) syncExtraArgs.push("--mark-cancelled");
 if (envBool("OGM_DRY_RUN", false)) syncExtraArgs.push("--dry-run");
 
