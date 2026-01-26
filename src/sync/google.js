@@ -102,7 +102,7 @@ function findEventByIdentity(items, identity) {
  * @param {any} calendar
  * @param {string} calendarRef
  */
-export async function ensureMirrorCalendar({ calendar, calendarRef }) {
+export async function findCalendarId({ calendar, calendarRef }) {
 	const res = await calendar.calendarList.list();
 	const items = res.data.items ?? [];
 	const desired = typeof calendarRef === "string" && calendarRef.trim() ? calendarRef.trim() : "Outlook Mirror";
@@ -110,6 +110,13 @@ export async function ensureMirrorCalendar({ calendar, calendarRef }) {
 	if (foundById?.id) return foundById.id;
 	const foundByName = items.find((c) => (c.summary ?? "").trim() === desired);
 	if (foundByName?.id) return foundByName.id;
+	return null;
+}
+
+export async function ensureMirrorCalendar({ calendar, calendarRef }) {
+	const foundId = await findCalendarId({ calendar, calendarRef });
+	if (foundId) return foundId;
+	const desired = typeof calendarRef === "string" && calendarRef.trim() ? calendarRef.trim() : "Outlook Mirror";
 
 	const created = await calendar.calendars.insert({
 		requestBody: { summary: desired, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
@@ -132,6 +139,30 @@ export async function listMirrorEvents({ calendar, calendarId, timeMin, timeMax 
 			calendarId,
 			timeMin,
 			timeMax,
+			singleEvents: true,
+			maxResults: 2500,
+			pageToken,
+			privateExtendedProperty: `${PRIVATE_SOURCE_KEY}*`,
+		});
+		events.push(...(res.data.items ?? []));
+		pageToken = res.data.nextPageToken;
+		if (!pageToken) break;
+	}
+
+	return events;
+}
+
+/**
+ * @param {any} calendar
+ * @param {{ calendarId: string }} opts
+ */
+export async function listMirrorEventsAll({ calendar, calendarId }) {
+	const events = [];
+	let pageToken = undefined;
+
+	while (true) {
+		const res = await calendar.events.list({
+			calendarId,
 			singleEvents: true,
 			maxResults: 2500,
 			pageToken,

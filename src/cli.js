@@ -15,6 +15,7 @@ import {
 import { validateAbsoluteUrl, validateCdpPort, errorMessage } from "./utils.js";
 import { normalizePort } from "./keepalive/engines.js";
 import { resolveUserDataDir, runKeepalive } from "./keepalive/keepalive.js";
+import { getGoogleCalendarClient } from "./google/client.js";
 import {
 	discoverOwaCandidates,
 	discoverOwaCandidatesFromLog,
@@ -25,8 +26,10 @@ import { fetchOwaEventsByTemplate, fetchOwaEventsByTemplates } from "./owa/event
 import { loadTemplateFromFile, saveTemplatesFile } from "./owa/templates.js";
 import { shouldSyncEvent } from "./sync/filters.js";
 import {
+	findCalendarId,
 	getGoogleSyncContext,
 	listMirrorEvents,
+	listMirrorEventsAll,
 	markMirroredCancelled,
 	upsertMirroredEvent,
 	PRIVATE_SOURCE_KEY,
@@ -93,6 +96,21 @@ function parseSource(value) {
 	const v = String(value ?? "").trim().toLowerCase();
 	if (v === "capture" || v === "template") return /** @type {any} */ (v);
 	throw new UserError("--source must be 'capture' or 'template'");
+}
+
+const MIRROR_MARKER = "Mirrored from Outlook (read-only)";
+
+function looksLikeMirroredEvent(event, { requireMarker = true } = {}) {
+	const sourceKey = event?.extendedProperties?.private?.[PRIVATE_SOURCE_KEY];
+	if (!sourceKey || typeof sourceKey !== "string" || !sourceKey.trim()) return false;
+	if (!requireMarker) return true;
+	const desc = String(event?.description ?? "");
+	if (!desc) return false;
+	const normalized = desc.toLowerCase();
+	return (
+		normalized.includes(MIRROR_MARKER.toLowerCase()) &&
+		normalized.includes("source key:")
+	);
 }
 
 /**
@@ -670,6 +688,86 @@ function buildProgram() {
 			} finally {
 				await disconnectBestEffort(conn.browser);
 			}
+		});
+
+	program
+		.command("clear")
+		.description("Delete mirrored events from Google Calendar (dry-run unless --yes)")
+		.option("--google-credentials <path>", "Google OAuth credentials JSON (overrides config)")
+		.option("--google-token <path>", "Google token JSON path (overrides config)")
+		.option("--calendar <idOrName>", "Destination Google calendar (id or name; overrides config)")
+		.option("--calendar-name <name>", "Deprecated: use --calendar")
+		.option("--no-require-marker", "Skip description marker checks (less safe)")
+		.option("--yes", "Actually delete events")
+		.option("--no-log-events", "Disable per-event logging")
+		.action(async (opts) => {
+			const cfgPath = program.opts().config;
+			/** @type {import('./config.js').MirrorConfig | null} */
+			let cfg = null;
+			try {
+				cfg = await loadConfig(cfgPath);
+			} catch {
+				// allow running without config if flags are provided
+			}
+
+			const credentialsPath = normalizePath(opts.googleCredentials ?? cfg?.google?.credentialsPath) ?? null;
+			const tokenPath = normalizePath(opts.googleToken ?? cfg?.google?.tokenPath) ?? DEFAULT_TOKEN_PATH;
+			const calendarRef = String(
+				opts.calendar ?? opts.calendarName ?? cfg?.google?.calendarId ?? cfg?.google?.calendarName ?? "Outlook Mirror"
+			);
+			const requireMarker = opts.requireMarker !== false;
+			const logEvents = opts.logEvents !== false;
+
+			if (!credentialsPath) {
+				throw new UserError(
+					"Missing Google credentials. Run 'setup' or pass --google-credentials /path/to/credentials.json"
+				);
+			}
+
+			const { calendar } = await getGoogleCalendarClient({
+				credentialsPath: /** @type {string} */ (credentialsPath),
+				tokenPath,
+			});
+
+			const calendarId = await findCalendarId({ calendar, calendarRef });
+			if (!calendarId) {
+				throw new UserError(`Calendar not found: ${calendarRef}`);
+			}
+
+			const mirrorEvents = await listMirrorEventsAll({ calendar, calendarId });
+			const candidates = mirrorEvents.filter((ev) => looksLikeMirroredEvent(ev, { requireMarker }));
+
+			console.info(
+				`Found ${mirrorEvents.length} event(s) with source keys; ${candidates.length} matched mirror signatures.`
+			);
+
+			if (!candidates.length) return;
+
+			if (!opts.yes) {
+				if (logEvents) {
+					for (const ev of candidates) {
+						console.info(`DRY RUN: would delete: ${ev.summary ?? "(no title)"} (${ev.id ?? "no-id"})`);
+					}
+				}
+				console.info("Dry run only. Re-run with --yes to delete.");
+				return;
+			}
+
+			let deleted = 0;
+			for (const ev of candidates) {
+				if (!ev?.id) continue;
+				await calendar.events.delete({
+					calendarId,
+					eventId: ev.id,
+					sendUpdates: "none",
+				});
+				deleted += 1;
+				if (logEvents) {
+					console.info(`DELETED: ${ev.summary ?? "(no title)"} (${ev.id})`);
+				}
+			}
+
+			console.info(`Deleted ${deleted} mirrored event(s).`);
 		});
 
 	return program;

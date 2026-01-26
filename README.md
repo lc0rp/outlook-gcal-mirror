@@ -169,6 +169,22 @@ Notes:
 - Capture mode only sees what OWA loads during the capture window. If you need more coverage, increase `--capture-ms` and navigate weeks while it runs.
 - Only use `--mark-cancelled` in capture mode if you’re confident the capture covered the full time window.
 
+### 6) Clear mirrored events
+
+This is **dry-run by default**; add `--yes` to actually delete.
+
+```bash
+node src/cli.js clear \
+  --google-credentials /path/to/client_secret.json \
+  --calendar "Outlook Mirror"
+
+# actually delete
+node src/cli.js clear \
+  --google-credentials /path/to/client_secret.json \
+  --calendar "Outlook Mirror" \
+  --yes
+```
+
 ## Safety: no attendee email
 
 This tool **does not invite Outlook attendees** to Google events. Attendee names are written to the event description only.
