@@ -77,6 +77,16 @@ function normalizeEventTime(value) {
 	return "";
 }
 
+const CANCEL_PREFIX_RE = /^(canceled|cancelled)\s*:\s*/i;
+
+function stripCancelPrefix(summary) {
+	if (!summary) return null;
+	const trimmed = String(summary).trim();
+	const next = trimmed.replace(CANCEL_PREFIX_RE, "");
+	if (!next || next === trimmed) return null;
+	return next.trim();
+}
+
 function buildEventIdentity({ summary, start, end }) {
 	const summaryKey = normalizeSummary(summary);
 	const startKey = normalizeEventTime(start);
@@ -85,15 +95,29 @@ function buildEventIdentity({ summary, start, end }) {
 	return `${summaryKey}|${startKey}|${endKey}`;
 }
 
-function findEventByIdentity(items, identity) {
-	if (!identity) return null;
+function buildEventIdentityCandidates({ summary, start, end }) {
+	const identities = [];
+	const base = buildEventIdentity({ summary, start, end });
+	if (base) identities.push(base);
+	const stripped = stripCancelPrefix(summary);
+	if (stripped) {
+		const alt = buildEventIdentity({ summary: stripped, start, end });
+		if (alt && !identities.includes(alt)) identities.push(alt);
+	}
+	return identities;
+}
+
+function findEventByIdentities(items, identities) {
+	if (!Array.isArray(identities) || identities.length === 0) return null;
+	const wanted = new Set(identities.filter(Boolean));
+	if (wanted.size === 0) return null;
 	for (const item of items ?? []) {
 		const itemIdentity = buildEventIdentity({
 			summary: item?.summary,
 			start: item?.start,
 			end: item?.end,
 		});
-		if (itemIdentity && itemIdentity === identity) return item;
+		if (itemIdentity && wanted.has(itemIdentity)) return item;
 	}
 	return null;
 }
@@ -204,12 +228,12 @@ export async function upsertMirroredEvent({ calendar, calendarId, ev }) {
 
 	let existing = (res.data.items ?? [])[0] ?? null;
 	if (!existing) {
-		const identity = buildEventIdentity({
+		const identities = buildEventIdentityCandidates({
 			summary: ev.subject,
 			start: ev.start,
 			end: ev.end,
 		});
-		if (identity) {
+		if (identities.length) {
 			const fallbackRes = await calendar.events.list({
 				calendarId,
 				timeMin,
@@ -217,7 +241,7 @@ export async function upsertMirroredEvent({ calendar, calendarId, ev }) {
 				singleEvents: true,
 				maxResults: 50,
 			});
-			existing = findEventByIdentity(fallbackRes.data.items ?? [], identity);
+			existing = findEventByIdentities(fallbackRes.data.items ?? [], identities);
 		}
 	}
 
