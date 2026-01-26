@@ -154,9 +154,9 @@ export async function listMirrorEvents({ calendar, calendarId, timeMin, timeMax 
 
 /**
  * @param {any} calendar
- * @param {{ calendarId: string }} opts
+ * @param {{ calendarId: string, query?: string }} opts
  */
-export async function listMirrorEventsAll({ calendar, calendarId }) {
+export async function listMirrorEventsAll({ calendar, calendarId, query }) {
 	const events = [];
 	let pageToken = undefined;
 
@@ -166,7 +166,7 @@ export async function listMirrorEventsAll({ calendar, calendarId }) {
 			singleEvents: true,
 			maxResults: 2500,
 			pageToken,
-			privateExtendedProperty: `${PRIVATE_SOURCE_KEY}*`,
+			...(query ? { q: query } : {}),
 		});
 		events.push(...(res.data.items ?? []));
 		pageToken = res.data.nextPageToken;

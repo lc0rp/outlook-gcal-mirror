@@ -734,7 +734,11 @@ function buildProgram() {
 				throw new UserError(`Calendar not found: ${calendarRef}`);
 			}
 
-			const mirrorEvents = await listMirrorEventsAll({ calendar, calendarId });
+			const mirrorEvents = await listMirrorEventsAll({
+				calendar,
+				calendarId,
+				query: requireMarker ? "Mirrored from Outlook" : undefined,
+			});
 			const candidates = mirrorEvents.filter((ev) => looksLikeMirroredEvent(ev, { requireMarker }));
 
 			console.info(
