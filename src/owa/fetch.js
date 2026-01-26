@@ -1,5 +1,7 @@
 import { templateReplace } from "../utils.js";
 
+const OWA_HOSTS = ["outlook.office.com", "outlook.cloud.microsoft"];
+
 /**
  * Run a fetch inside the page context, so OWA cookies/session are used automatically.
  *
@@ -47,6 +49,73 @@ export async function owaFetchJson(page, req) {
 		},
 		{ url: req.url, method, headers, body: req.body }
 	);
+}
+
+function getPageUrl(page) {
+	try {
+		const raw = typeof page?.url === "function" ? page.url() : page?.url;
+		return typeof raw === "string" ? raw : null;
+	} catch {
+		return null;
+	}
+}
+
+function isOwaHost(host) {
+	return !!host && OWA_HOSTS.includes(host);
+}
+
+function normalizeOwaUrlForPage(url, page) {
+	if (!url) return url;
+	const pageUrl = getPageUrl(page);
+	if (!pageUrl) return url;
+	let pageHost;
+	try {
+		pageHost = new URL(pageUrl).host;
+	} catch {
+		return url;
+	}
+	if (!isOwaHost(pageHost)) return url;
+	try {
+		const reqUrl = new URL(url);
+		if (!isOwaHost(reqUrl.host) || reqUrl.host === pageHost) return url;
+		reqUrl.host = pageHost;
+		return reqUrl.toString();
+	} catch {
+		return url;
+	}
+}
+
+function swapOwaHost(url) {
+	try {
+		const reqUrl = new URL(url);
+		if (!isOwaHost(reqUrl.host)) return null;
+		const next = OWA_HOSTS.find((h) => h !== reqUrl.host);
+		if (!next) return null;
+		reqUrl.host = next;
+		return reqUrl.toString();
+	} catch {
+		return null;
+	}
+}
+
+export async function owaFetchJsonWithFallback(page, req) {
+	const normalizedUrl = normalizeOwaUrlForPage(req.url, page);
+	const primaryReq = normalizedUrl === req.url ? req : { ...req, url: normalizedUrl };
+
+	try {
+		return await owaFetchJson(page, primaryReq);
+	} catch (err) {
+		const msg = String(err?.message ?? err);
+		const statusMatch = msg.match(/OWA fetch failed: HTTP (\d+)/i);
+		const status = statusMatch ? Number(statusMatch[1]) : null;
+		const shouldFallback =
+			msg.includes("Failed to fetch") || (status !== null && [401, 403, 404].includes(status));
+		if (!shouldFallback) throw err;
+		const altUrl = swapOwaHost(primaryReq.url);
+		if (!altUrl || altUrl === primaryReq.url) throw err;
+		console.info(`OWA fetch failed; retrying with ${altUrl}`);
+		return await owaFetchJson(page, { ...primaryReq, url: altUrl });
+	}
 }
 
 /**

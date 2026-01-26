@@ -170,9 +170,9 @@ Notes:
 
 ## Safety: no attendee email
 
-This tool **never adds guests** to Google events. Attendee names are written to the event description only.
+This tool **does not invite Outlook attendees** to Google events. Attendee names are written to the event description only.
 
-When updating/creating events, it uses Google Calendar API options that suppress notifications.
+It **always adds `owner@example.com` as a single attendee** on mirrored events, but uses Google Calendar API options (`sendUpdates: "none"`) to suppress any notifications.
 
 ## Scheduling
 

@@ -1,5 +1,5 @@
 import { captureOwaEvents } from "./capture.js";
-import { applyTemplate, getOwaBearerToken, getOwaCanary, owaFetchJson } from "./fetch.js";
+import { applyTemplate, getOwaBearerToken, getOwaCanary, owaFetchJsonWithFallback } from "./fetch.js";
 import { extractOutlookEventIdsFromJson, extractOutlookEventsFromJson } from "./extract.js";
 
 /**
@@ -255,6 +255,20 @@ export function applyRangeToRequestHeaders(headers, range) {
 	return { headers: out, matched };
 }
 
+function templateUsesBearerPrefix(template) {
+	try {
+		const blob = JSON.stringify(template).toLowerCase();
+		return blob.includes("bearer {{owabearer}}".toLowerCase());
+	} catch {
+		return false;
+	}
+}
+
+function stripBearerPrefix(value) {
+	if (typeof value !== "string") return value;
+	return value.replace(/^bearer\s+/i, "");
+}
+
 /**
  * @param {{ page: any, template: OwaRequestTemplate, range: { start: Date, end: Date }, templateVars?: Record<string,string> }} opts
  */
@@ -280,6 +294,10 @@ async function resolveTemplateVars({ page, template, range, templateVars }) {
 	if (needsBearer && !vars.owaBearer) {
 		const bearer = await getOwaBearerToken(page);
 		vars.owaBearer = bearer ?? "";
+	}
+
+	if (needsBearer && vars.owaBearer && templateUsesBearerPrefix(template)) {
+		vars.owaBearer = stripBearerPrefix(vars.owaBearer);
 	}
 
 	return vars;
@@ -404,7 +422,7 @@ export async function fetchOwaEventsByTemplate({ page, template, range, template
 	if (!matchedRangeKeys && !templateContainsPlaceholder(template, "start") && !templateContainsPlaceholder(template, "end")) {
 		console.info("Note: request template does not include start/end placeholders or range keys; using captured range if present.");
 	}
-	const json = await owaFetchJson(page, requestWithRange);
+	const json = await owaFetchJsonWithFallback(page, requestWithRange);
 	return extractOutlookEventsFromJson(json);
 }
 
@@ -451,7 +469,7 @@ export async function fetchOwaEventsByTemplates({
 	if (!viewMatchedRangeKeys && !templateContainsPlaceholder(viewTemplate, "start") && !templateContainsPlaceholder(viewTemplate, "end")) {
 		console.info("Note: view template does not include start/end placeholders or range keys; using captured range if present.");
 	}
-	const viewJson = await owaFetchJson(page, viewRequestWithRange);
+	const viewJson = await owaFetchJsonWithFallback(page, viewRequestWithRange);
 	const viewEvents = extractOutlookEventsFromJson(viewJson);
 
 	if (!eventTemplate) return viewEvents;
@@ -470,7 +488,7 @@ export async function fetchOwaEventsByTemplates({
 			vars: detailVars,
 			eventIds: batch,
 		});
-		const detailJson = await owaFetchJson(page, detailReq);
+		const detailJson = await owaFetchJsonWithFallback(page, detailReq);
 		detailEvents.push(...extractOutlookEventsFromJson(detailJson));
 	}
 
