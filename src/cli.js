@@ -2,6 +2,7 @@
 
 import { Command } from "commander";
 import process from "node:process";
+import { spawn } from "node:child_process";
 
 import { connectOverCdp } from "./cdp/index.js";
 import { UserError } from "./errors.js";
@@ -99,6 +100,71 @@ function parseSource(value) {
 }
 
 const MIRROR_MARKER = "Mirrored from Outlook (read-only)";
+
+function sleep(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForCdpReady({ port, timeoutMs }) {
+	const startedAt = Date.now();
+	const url = `http://127.0.0.1:${port}/json/version`;
+	let lastErr;
+
+	while (Date.now() - startedAt < timeoutMs) {
+		try {
+			const res = await fetch(url, { headers: { accept: "application/json" } });
+			if (res.ok) return true;
+			lastErr = new Error(`HTTP ${res.status}`);
+		} catch (err) {
+			lastErr = err;
+		}
+		await sleep(500);
+	}
+
+	throw lastErr ?? new Error(`Timed out waiting for CDP at ${url}`);
+}
+
+function shouldWaitForLogin(url, targetUrl) {
+	if (!url) return true;
+	const lower = String(url).toLowerCase();
+	if (
+		lower.includes("login") ||
+		lower.includes("signin") ||
+		lower.includes("microsoftonline") ||
+		lower.includes("oauth") ||
+		lower.includes("account")
+	) {
+		return true;
+	}
+	try {
+		const targetHost = new URL(targetUrl).host;
+		const pageHost = new URL(url).host;
+		if (targetHost && pageHost && targetHost !== pageHost) return true;
+	} catch {
+		// ignore
+	}
+	return false;
+}
+
+async function waitForOutlookLogin({ engine, port, targetUrl, timeoutMs }) {
+	const startedAt = Date.now();
+	let lastUrl = null;
+	while (Date.now() - startedAt < timeoutMs) {
+		try {
+			const conn = await connectOverCdp({ engine, port, targetUrl });
+			const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
+			lastUrl = pageUrl ?? null;
+			await disconnectBestEffort(conn.browser);
+			if (!shouldWaitForLogin(pageUrl, targetUrl)) return;
+		} catch {
+			// ignore; we'll retry until timeout
+		}
+		console.info("[ensure-cdp] waiting for Outlook login...");
+		await sleep(2000);
+	}
+
+	throw new UserError(`Timed out waiting for Outlook login. Last URL: ${lastUrl ?? "unknown"}`);
+}
 
 function looksLikeMirroredEvent(event, { requireMarker = true } = {}) {
 	const sourceKey = event?.extendedProperties?.private?.[PRIVATE_SOURCE_KEY];
@@ -538,6 +604,8 @@ function buildProgram() {
 		.option("--window-days <n>", "Days ahead to mirror (overrides config)")
 		.option("--lookback-days <n>", "Days back to include when listing mirror events", "1")
 		.option("--mark-cancelled", "Mark missing mirrored events as CANCELLED")
+		.option("--ensure-cdp", "Start keepalive if CDP is unavailable and wait for login")
+		.option("--ensure-cdp-timeout <ms>", "How long to wait for CDP/login when --ensure-cdp is set", "300000")
 		.option("--dry-run", "Do not write to Google; print what would happen")
 		.option("--no-log-events", "Disable per-event logging")
 		.action(async (opts) => {
@@ -569,6 +637,8 @@ function buildProgram() {
 			);
 
 			const markCancelled = opts.markCancelled !== undefined ? !!opts.markCancelled : !!cfg?.sync?.markCancelled;
+			const ensureCdp = !!opts.ensureCdp;
+			const ensureCdpTimeoutMs = parsePositiveInt(opts.ensureCdpTimeout, "--ensure-cdp-timeout") ?? 300000;
 			const logEvents = opts.logEvents !== false;
 
 			if (!opts.dryRun && !credentialsPath) {
@@ -595,98 +665,137 @@ function buildProgram() {
 				}
 			}
 
-			const conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
+			let keepaliveProc = null;
+			let startedKeepalive = false;
+
+			if (ensureCdp) {
+				try {
+					await waitForCdpReady({ port: cdpPort, timeoutMs: 1000 });
+				} catch {
+					console.info("[ensure-cdp] CDP unavailable; starting keepalive...");
+					const args = [
+						process.argv[1],
+						"keepalive",
+						"--target-url",
+						targetUrl,
+						"--engine",
+						engine,
+						"--cdp-port",
+						String(cdpPort),
+					];
+					keepaliveProc = spawn(process.execPath, args, { stdio: "inherit" });
+					startedKeepalive = true;
+					await waitForCdpReady({ port: cdpPort, timeoutMs: ensureCdpTimeoutMs });
+				}
+
+				await waitForOutlookLogin({ engine, port: cdpPort, targetUrl, timeoutMs: ensureCdpTimeoutMs });
+			}
+
+			let conn = null;
 			try {
-				const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
-				console.info(`Using tab: ${pageUrl}`);
+				conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
+				try {
+					const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
+					console.info(`Using tab: ${pageUrl}`);
 
-				let events;
-				if (source === "capture") {
-					events = await captureOwaEvents({ page: conn.page, durationMs: captureMs, urlIncludes });
-				} else {
-					events = await fetchOwaEventsByTemplates({
-						page: conn.page,
-						viewTemplate: viewTemplate,
-						eventTemplate,
-						range,
-						templateVars: cfg?.outlook?.owaTemplateVars,
-					});
-				}
-
-				if (cfg?.outlook) {
-					events = events.filter((ev) =>
-						shouldSyncEvent(ev, {
-							includeCalendars: cfg.outlook.includeCalendars,
-							skipCalendars: cfg.outlook.skipCalendars,
-							includeOwnerEmails: cfg.outlook.includeOwnerEmails,
-							skipOwnerEmails: cfg.outlook.skipOwnerEmails,
-						})
-					);
-				}
-
-				console.info(`Extracted ${events.length} event(s) after filtering.`);
-
-				if (logEvents) {
-					for (const ev of events) {
-						console.info(`PULL: ${formatEventSummary(ev)}`);
+					let events;
+					if (source === "capture") {
+						events = await captureOwaEvents({ page: conn.page, durationMs: captureMs, urlIncludes });
+					} else {
+						events = await fetchOwaEventsByTemplates({
+							page: conn.page,
+							viewTemplate: viewTemplate,
+							eventTemplate,
+							range,
+							templateVars: cfg?.outlook?.owaTemplateVars,
+						});
 					}
-				}
 
-				if (opts.dryRun) {
-					for (const ev of events) {
-						console.info(`DRY RUN: would mirror: ${formatEventSummary(ev)} [${ev.sourceKey}]`);
+					if (cfg?.outlook) {
+						events = events.filter((ev) =>
+							shouldSyncEvent(ev, {
+								includeCalendars: cfg.outlook.includeCalendars,
+								skipCalendars: cfg.outlook.skipCalendars,
+								includeOwnerEmails: cfg.outlook.includeOwnerEmails,
+								skipOwnerEmails: cfg.outlook.skipOwnerEmails,
+							})
+						);
 					}
-					return;
-				}
 
-				const { calendar, calendarId } = await getGoogleSyncContext({
-					credentialsPath: /** @type {string} */ (credentialsPath),
-					tokenPath,
-					calendarRef,
-				});
+					console.info(`Extracted ${events.length} event(s) after filtering.`);
 
-				let created = 0;
-				let updated = 0;
-				for (const ev of events) {
-					const res = await upsertMirroredEvent({ calendar, calendarId, ev });
-					if (res.action === "created") created += 1;
-					if (res.action === "updated") updated += 1;
 					if (logEvents) {
-						console.info(`SYNC (${res.action}): ${formatEventSummary(ev)}`);
+						for (const ev of events) {
+							console.info(`PULL: ${formatEventSummary(ev)}`);
+						}
+					}
+
+					if (opts.dryRun) {
+						for (const ev of events) {
+							console.info(`DRY RUN: would mirror: ${formatEventSummary(ev)} [${ev.sourceKey}]`);
+						}
+						return;
+					}
+
+					const { calendar, calendarId } = await getGoogleSyncContext({
+						credentialsPath: /** @type {string} */ (credentialsPath),
+						tokenPath,
+						calendarRef,
+					});
+
+					let created = 0;
+					let updated = 0;
+					for (const ev of events) {
+						const res = await upsertMirroredEvent({ calendar, calendarId, ev });
+						if (res.action === "created") created += 1;
+						if (res.action === "updated") updated += 1;
+						if (logEvents) {
+							console.info(`SYNC (${res.action}): ${formatEventSummary(ev)}`);
+						}
+					}
+
+					console.info(`Upsert complete. created=${created} updated=${updated}`);
+
+					if (!markCancelled) return;
+
+					console.info("mark-cancelled enabled: listing mirror events and cancelling missing source keys.");
+					if (source === "capture") {
+						console.info(
+							"Warning: capture mode is partial by nature; only enable this if you're confident the capture covered the full time window."
+						);
+					}
+
+					const { timeMin, timeMax } = toTimeRangeIso(range);
+					const mirrorEvents = await listMirrorEvents({
+						calendar,
+						calendarId,
+						timeMin,
+						timeMax,
+					});
+
+					const present = new Set(events.map((e) => e.sourceKey));
+					let cancelled = 0;
+					for (const gcalEv of mirrorEvents) {
+						const sourceKey = gcalEv.extendedProperties?.private?.[PRIVATE_SOURCE_KEY];
+						if (!sourceKey || typeof sourceKey !== "string") continue;
+						if (present.has(sourceKey)) continue;
+						const res = await markMirroredCancelled({ calendar, calendarId, gcalEvent: gcalEv });
+						if (res.action === "cancelled") cancelled += 1;
+					}
+					console.info(`Cancelled ${cancelled} mirror event(s) not present in scan.`);
+				} finally {
+					if (conn) {
+						await disconnectBestEffort(conn.browser);
 					}
 				}
-
-				console.info(`Upsert complete. created=${created} updated=${updated}`);
-
-				if (!markCancelled) return;
-
-				console.info("mark-cancelled enabled: listing mirror events and cancelling missing source keys.");
-				if (source === "capture") {
-					console.info(
-						"Warning: capture mode is partial by nature; only enable this if you're confident the capture covered the full time window."
-					);
-				}
-
-				const { timeMin, timeMax } = toTimeRangeIso(range);
-				const mirrorEvents = await listMirrorEvents({
-					calendar,
-					calendarId,
-					timeMin,
-					timeMax,
-				});
-
-				const present = new Set(events.map((e) => e.sourceKey));
-				let cancelled = 0;
-				for (const gcalEv of mirrorEvents) {
-					const sourceKey = gcalEv.extendedProperties?.private?.[PRIVATE_SOURCE_KEY];
-					if (!sourceKey || typeof sourceKey !== "string") continue;
-					if (present.has(sourceKey)) continue;
-					const res = await markMirroredCancelled({ calendar, calendarId, gcalEvent: gcalEv });
-					if (res.action === "cancelled") cancelled += 1;
-				}
-				console.info(`Cancelled ${cancelled} mirror event(s) not present in scan.`);
 			} finally {
-				await disconnectBestEffort(conn.browser);
+				if (startedKeepalive && keepaliveProc) {
+					try {
+						keepaliveProc.kill("SIGTERM");
+					} catch {
+						// ignore
+					}
+				}
 			}
 		});
 

@@ -166,6 +166,7 @@ node src/cli.js sync \
 Notes:
 
 - `--calendar` accepts a calendar id or name; id match is attempted first. Default: `Outlook Mirror`.
+- `--ensure-cdp` will start keepalive if CDP isn’t running and wait for login (stops keepalive when done).
 - Capture mode only sees what OWA loads during the capture window. If you need more coverage, increase `--capture-ms` and navigate weeks while it runs.
 - Only use `--mark-cancelled` in capture mode if you’re confident the capture covered the full time window.
 
