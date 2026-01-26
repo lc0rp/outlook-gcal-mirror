@@ -13,6 +13,7 @@ export async function owaFetchJson(page, req) {
 	const headers = req.headers ?? {};
 
 	return await page.evaluate(
+		/* c8 ignore start */
 		async ({ url, method, headers, body }) => {
 			const res = await fetch(url, {
 				method,
@@ -47,6 +48,7 @@ export async function owaFetchJson(page, req) {
 				);
 			}
 		},
+		/* c8 ignore stop */
 		{ url: req.url, method, headers, body: req.body }
 	);
 }
@@ -153,7 +155,7 @@ export async function getOwaCanary(page) {
 		// ignore and try in-page lookup
 	}
 
-	return await page.evaluate(() => {
+	return await page.evaluate(/* c8 ignore start */() => {
 		const cookie = document.cookie || "";
 		// Common cookie key in OWA variants.
 		for (const key of ["X-OWA-CANARY", "OWA-CANARY", "XOWACANARY"]) {
@@ -170,7 +172,7 @@ export async function getOwaCanary(page) {
 			w?.__OWA_CANARY__ ||
 			null
 		);
-	});
+	}/* c8 ignore stop */);
 }
 
 /**

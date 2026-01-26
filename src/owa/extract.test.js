@@ -69,4 +69,50 @@ describe("extractOutlookEventsFromJson", () => {
 		const ids = extractOutlookEventIdsFromJson(json);
 		expect(ids).toEqual(["AAk-test-item"]);
 	});
+
+	test("handles empty json", () => {
+		expect(extractOutlookEventsFromJson({})).toHaveLength(0);
+		expect(extractOutlookEventsFromJson(null)).toHaveLength(0);
+		expect(extractOutlookEventsFromJson(undefined)).toHaveLength(0);
+	});
+
+	test("handles nested events in array", () => {
+		const json = {
+			value: [
+				{
+					Subject: "Event 1",
+					Start: "2026-01-15T10:00:00Z",
+					End: "2026-01-15T11:00:00Z",
+					Id: "id-1",
+				},
+				{
+					Subject: "Event 2",
+					Start: "2026-01-16T10:00:00Z",
+					End: "2026-01-16T11:00:00Z",
+					Id: "id-2",
+				},
+			],
+		};
+
+		const events = extractOutlookEventsFromJson(json);
+		expect(events).toHaveLength(2);
+		expect(events[0].subject).toBe("Event 1");
+		expect(events[1].subject).toBe("Event 2");
+	});
+
+	test("extracts attendees from displayName format", () => {
+		const json = {
+			Subject: "Multi-format",
+			Start: "2026-01-15T10:00:00Z",
+			End: "2026-01-15T11:00:00Z",
+			attendees: [
+				{ displayName: "Person B" },
+				{ name: "Person C" },
+			],
+		};
+
+		const events = extractOutlookEventsFromJson(json);
+		expect(events[0].attendeeNames).toContain("Person B");
+		expect(events[0].attendeeNames).toContain("Person C");
+	});
 });
