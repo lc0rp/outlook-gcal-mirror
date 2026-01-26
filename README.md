@@ -25,28 +25,45 @@ This repo is split conceptually into two layers:
    - Upserts events into a dedicated Google calendar (default name: `Outlook Mirror`).
    - Stores a stable source id in `extendedProperties.private` for idempotency.
 
-## Setup
+## Quickstart (recommended)
 
-### Prereqs
+### 0) Requirements
 
-Install deps in this repo:
+- Node **>= 20**
+- A logged-in Outlook Web (OWA) account
+- A Google OAuth client (type: **Installed app**)
+- Chrome/Chromium available for Playwright/Puppeteer
+
+### 1) Install dependencies
 
 ```bash
-npm install
-
-# Choose ONE automation engine:
-# - lighter install (uses your existing Chrome):
-npm install playwright-core
-# or:
-npm install puppeteer-core
-
-# Needed for Google Calendar API:
-npm install googleapis
+pnpm install
+# or: npm install
 ```
 
-### 1) Start Outlook in a CDP-enabled browser
+Notes:
 
-Use the built-in keepalive command to start Chromium with CDP enabled:
+- Playwright + Puppeteer are already dependencies. Choose the runtime with `--engine`.
+- If Playwright can’t find a browser, run `npx playwright install chromium`.
+- If your package manager skips optional deps, install Google APIs:
+  `pnpm add googleapis` (or `npm install googleapis`).
+
+### 2) Create a config file (one-time)
+
+```bash
+node src/cli.js setup \
+  --cdp-port 9222 \
+  --engine playwright \
+  --target-url https://outlook.office.com/calendar/view/week \
+  --google-credentials /path/to/client_secret.json \
+  --calendar "Outlook Mirror"
+```
+
+Default config path: `~/.config/outlook-gcal-mirror/config.json`
+
+Pass `--config /path/to/config.json` if you want a different location.
+
+### 3) Start Outlook in a CDP-enabled browser
 
 ```bash
 node src/cli.js keepalive --target-url https://outlook.office.com/calendar/view/week -p 9222 --only-if-idle
@@ -54,26 +71,27 @@ node src/cli.js keepalive --target-url https://outlook.office.com/calendar/view/
 
 Log in and make sure the calendar week view is loaded.
 
-### 2) Discover OWA internal requests (one-time)
+Tip: pass `--user-data-dir ~/.config/outlook-gcal-mirror/chrome` to keep a stable Chrome profile.
 
-In another terminal:
+### 4) Discover OWA internal requests (one-time)
 
 ```bash
-node src/cli.js discover-owa --cdp-port 9222 --engine playwright -duration-ms 120000 --min-score 1 --no-url-filter
-
-# If you see "No candidates found", try:
-# - closing extra tabs (so CDP attaches to the calendar tab)
-# - increasing duration: --duration-ms 120000
-# - lowering the score threshold: --min-score 1
-# - disabling URL filtering (some tenants use different hosts): --no-url-filter
+node src/cli.js discover-owa --cdp-port 9222 --engine playwright --duration-ms 120000 --min-score 1 --no-url-filter
 ```
 
-Then, in the Outlook tab:
+Then:
 
 - Click a calendar event to open its details.
 - Optionally navigate between weeks.
 
-The discovery command prints candidate request patterns (URL + method) and a `suggestedTemplate`.
+The discovery command prints candidate request patterns and a `suggestedTemplate`.
+
+If you see “No candidates found”:
+
+- close extra tabs (so CDP attaches to the calendar tab)
+- increase `--duration-ms`
+- lower `--min-score`
+- set `--no-url-filter` (some tenants use `outlook.cloud.microsoft`)
 
 If live discovery misses the initial payload, you can record traffic and scan the log later:
 
@@ -92,7 +110,7 @@ If you use `--save-templates`, the file defaults to `~/.config/outlook-gcal-mirr
 
 Note: the log can include sensitive data; delete it when done or use `--no-record-body`.
 
-To use template-based fetch mode, paste one of those templates into your config:
+To use template-based fetch mode, paste a template into your config:
 
 ```json
 {
@@ -116,13 +134,14 @@ Notes:
 - The template supports placeholders: `{{start}}`, `{{end}}`, `{{owaCanary}}`.
 - If your endpoint needs extra constants (folder ids, user ids, etc.), put them under `outlook.owaTemplateVars` and reference them as `{{myVar}}`.
 
-### 3) Google OAuth (one-time)
-
-You’ll need a Google Cloud OAuth client for an “Installed app” (Desktop).
+### 5) Google OAuth (one-time)
 
 Provide credentials JSON via `--google-credentials /path/to/client_secret.json`.
 
-### 4) Verify extraction
+The first sync will open the OAuth flow and store a token at:
+`~/.config/outlook-gcal-mirror/google-token.json` (override with `--google-token`).
+
+### 6) Verify extraction
 
 Passive capture mode:
 
@@ -136,7 +155,7 @@ Template fetch mode (requires `outlook.owaRequestTemplate` in config):
 node src/cli.js fetch-owa --json
 ```
 
-### 5) Run a sync
+### 7) Run a sync
 
 Capture mode (default):
 
@@ -165,12 +184,54 @@ node src/cli.js sync \
 
 Notes:
 
-- `--calendar` accepts a calendar id or name; id match is attempted first. Default: `Outlook Mirror`.
+- `--calendar` accepts a calendar id or name; id match is attempted first. If the calendar doesn’t exist, it will be created.
+- `--lookback-days` (default: 1) includes recently-started events.
 - `--ensure-cdp` will start keepalive if CDP isn’t running and wait for login (stops keepalive when done).
 - Capture mode only sees what OWA loads during the capture window. If you need more coverage, increase `--capture-ms` and navigate weeks while it runs.
 - Only use `--mark-cancelled` in capture mode if you’re confident the capture covered the full time window.
 
-### 6) Clear mirrored events
+## Config file
+
+Default path: `~/.config/outlook-gcal-mirror/config.json`
+
+Notes:
+
+- Paths are treated literally (no `~` expansion). Use absolute paths in config.
+- Template files default to `~/.config/outlook-gcal-mirror/templates.json`.
+
+A minimal config (what `setup` writes):
+
+```json
+{
+  "outlook": {
+    "cdpPort": 9222,
+    "engine": "playwright",
+    "targetUrl": "https://outlook.office.com/calendar/view/week"
+  },
+  "google": {
+    "credentialsPath": "/path/to/client_secret.json",
+    "tokenPath": "/home/you/.config/outlook-gcal-mirror/google-token.json",
+    "calendarName": "Outlook Mirror"
+  },
+  "sync": {
+    "windowDays": 14,
+    "markCancelled": false
+  }
+}
+```
+
+Optional filters (drop these under `outlook`):
+
+```json
+{
+  "includeCalendars": ["Team"],
+  "skipCalendars": ["Holidays"],
+  "includeOwnerEmails": ["me@company.com"],
+  "skipOwnerEmails": ["no-reply@company.com"]
+}
+```
+
+## Clear mirrored events
 
 This is **dry-run by default**; add `--yes` to actually delete.
 
@@ -196,4 +257,10 @@ It **always adds `owner@example.com` as a single attendee** on mirrored events, 
 
 Target cadence is every 30 minutes. On macOS, use a LaunchAgent `StartInterval=1800`.
 
-(We’ll add a sample `launchd` plist once the core sync is finalized.)
+There’s also a helper script that runs keepalive + discovery + verify + sync in one shot:
+
+```bash
+pnpm run mirror:all
+```
+
+Override behavior via env vars (see `scripts/mirror-all.js` for the full list).
