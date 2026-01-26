@@ -771,6 +771,7 @@ function buildProgram() {
 						calendarId,
 						timeMin,
 						timeMax,
+						query: "Mirrored from Outlook",
 					});
 
 					const present = new Set(events.map((e) => e.sourceKey));
