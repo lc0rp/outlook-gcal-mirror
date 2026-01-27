@@ -66,7 +66,7 @@ Pass `--config /path/to/config.json` if you want a different location.
 ### 3) Start Outlook in a CDP-enabled browser
 
 ```bash
-node src/cli.js keepalive --target-url https://outlook.office.com/calendar/view/week -p 9222 --only-if-idle
+DISPLAY=:1 XAUTHORITY=$HOME/.Xauthority node src/cli.js keepalive --target-url https://outlook.office.com/calendar/view/week -p 9222 --only-if-idle
 ```
 
 Log in and make sure the calendar week view is loaded.
@@ -96,7 +96,7 @@ If you see “No candidates found”:
 If live discovery misses the initial payload, you can record traffic and scan the log later:
 
 ```bash
-node src/cli.js keepalive \
+DISPLAY=:1 XAUTHORITY=$HOME/.Xauthority node src/cli.js keepalive \
   --target-url https://outlook.office.com/calendar/view/week \
   -p 9222 \
   --only-if-idle \
