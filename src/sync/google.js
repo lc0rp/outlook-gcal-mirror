@@ -262,6 +262,10 @@ export async function upsertMirroredEvent({ calendar, calendarId, ev }) {
 		},
 	};
 
+	if (ev.location) {
+		requestBody.location = ev.location;
+	}
+
 	if (!existing?.id) {
 		await calendar.events.insert({
 			calendarId,
