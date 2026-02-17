@@ -8,6 +8,7 @@ import { connectOverCdp } from "./cdp/index.js";
 import { UserError } from "./errors.js";
 import {
 	DEFAULT_CONFIG_PATH,
+	DEFAULT_BIDIR_STATE_PATH,
 	DEFAULT_TEMPLATES_PATH,
 	DEFAULT_TOKEN_PATH,
 	loadConfig,
@@ -35,6 +36,10 @@ import {
 	upsertMirroredEvent,
 	PRIVATE_SOURCE_KEY,
 } from "./sync/google.js";
+import { createCli365Client, DEFAULT_CLI365_WORKDIR } from "./providers/cli365.js";
+import { createGogClient } from "./providers/gog.js";
+import { loadBidirState, saveBidirState } from "./sync/bidir-state.js";
+import { runBidirectionalSync } from "./sync/bidir.js";
 
 const DEFAULT_TARGET_URLS = [
 	"https://outlook.office.com/calendar/view/week",
@@ -839,6 +844,100 @@ function buildProgram() {
 						// ignore
 					}
 				}
+			}
+		});
+
+	program
+		.command("sync-bidir")
+		.description("Bi-directional sync between Outlook (cli-365) and Google Calendar (gog)")
+		.option("--google-calendar <idOrName>", "Google calendar id/name (default: primary)")
+		.option("--gog-account <email>", "Google account email for gog --account")
+		.option("--gog-bin <path>", "gog binary path", "gog")
+		.option("--state-path <path>", "Path to bidirectional state JSON")
+		.option("--window-days <n>", "Days ahead to sync")
+		.option("--lookback-days <n>", "Days back to sync", "1")
+		.option("--cli365-workdir <path>", "cli-365 working directory")
+		.option("--cli365-config <path>", "cli-365 config path")
+		.option("--cli365-cdp-port <port>", "cli-365 CDP port")
+		.option("--cli365-folder <id>", "cli-365 calendar folder id")
+		.option("--cli365-ensure-cdp", "Pass --ensure-cdp to cli-365")
+		.option("--cli365-ensure-cdp-timeout <duration>", "Duration string passed to cli-365 --ensure-cdp-timeout")
+		.option("--dry-run", "Plan only; do not write events or state")
+		.option("--no-log-events", "Disable per-action logs")
+		.action(async (opts) => {
+			const cfgPath = program.opts().config;
+			/** @type {import('./config.js').MirrorConfig | null} */
+			let cfg = null;
+			try {
+				cfg = await loadConfig(cfgPath);
+			} catch {
+				// allow running without config
+			}
+
+			const windowDays =
+				parsePositiveInt(opts.windowDays ?? cfg?.sync?.windowDays, "--window-days") ?? 14;
+			const lookbackDays = parsePositiveInt(opts.lookbackDays, "--lookback-days") ?? 1;
+			const range = buildMirrorWindowRange({ lookbackDays, windowDays });
+			const statePath = normalizePath(opts.statePath ?? cfg?.bidir?.statePath) ?? DEFAULT_BIDIR_STATE_PATH;
+			const logEvents = opts.logEvents !== false;
+
+			const cli365Workdir = normalizePath(opts.cli365Workdir ?? cfg?.bidir?.cli365Workdir) ?? DEFAULT_CLI365_WORKDIR;
+			const cli365ConfigPath = normalizePath(opts.cli365Config ?? cfg?.bidir?.cli365ConfigPath);
+			const cli365EnsureCdp =
+				opts.cli365EnsureCdp !== undefined ? !!opts.cli365EnsureCdp : !!cfg?.bidir?.cli365EnsureCdp;
+			const cli365EnsureCdpTimeout = normalizePath(
+				opts.cli365EnsureCdpTimeout ?? cfg?.bidir?.cli365EnsureCdpTimeout
+			);
+			const cli365CdpPort = validateCdpPort(opts.cli365CdpPort ?? cfg?.outlook?.cdpPort ?? 9222);
+			const cli365Folder = normalizePath(opts.cli365Folder);
+
+			const gogBin = normalizePath(opts.gogBin ?? cfg?.bidir?.gogBin) ?? "gog";
+			const gogAccount = normalizePath(opts.gogAccount ?? cfg?.bidir?.gogAccount);
+			const calendarRef = String(
+				opts.googleCalendar ??
+					cfg?.bidir?.calendarId ??
+					cfg?.google?.calendarId ??
+					cfg?.google?.calendarName ??
+					"primary"
+			);
+
+			const outlookClient = createCli365Client({
+				workdir: cli365Workdir,
+				configPath: cli365ConfigPath ?? undefined,
+				cdpPort: cli365CdpPort,
+				ensureCdp: cli365EnsureCdp,
+				ensureCdpTimeout: cli365EnsureCdpTimeout ?? undefined,
+			});
+			const googleClient = createGogClient({
+				command: gogBin,
+				account: gogAccount ?? undefined,
+			});
+			const calendarId = await googleClient.resolveCalendarId(calendarRef);
+
+			const stateStore = {
+				load: () => loadBidirState(statePath),
+				save: (state) => saveBidirState(statePath, state),
+			};
+
+			const { summary } = await runBidirectionalSync({
+				outlookClient,
+				googleClient,
+				calendarId,
+				range,
+				stateStore,
+				outlookFolder: cli365Folder ?? undefined,
+				dryRun: !!opts.dryRun,
+				logger: logEvents ? console : null,
+			});
+
+			console.info(
+				`Bi-directional sync complete. google(created=${summary.createdOnGoogle},updated=${summary.updatedOnGoogle}) outlook(created=${summary.createdOnOutlook},updated=${summary.updatedOnOutlook}) linked=${summary.linkedByIdentity}`
+			);
+			if (summary.skippedLegacyGoogleEvents) {
+				console.info(`Skipped ${summary.skippedLegacyGoogleEvents} legacy mirror event(s) on Google.`);
+			}
+			if (opts.dryRun) {
+				console.info("Dry run only: no writes were performed and state file was not updated.");
 			}
 		});
 

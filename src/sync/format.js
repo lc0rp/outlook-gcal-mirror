@@ -5,6 +5,11 @@ export function buildGoogleDescription(ev) {
 	const lines = [];
 	lines.push("Mirrored from Outlook (read-only)");
 
+	if (ev.location) {
+		lines.push("");
+		lines.push(`Location: ${ev.location}`);
+	}
+
 	if (ev.attendeeNames.length) {
 		lines.push("");
 		lines.push("Attendees:");

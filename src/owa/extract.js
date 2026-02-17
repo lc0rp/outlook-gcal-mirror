@@ -11,6 +11,7 @@ import { sha1Hex } from "../utils.js";
  * @property {string | null} organizerEmail
  * @property {string | null} sourceCalendarName
  * @property {string | null} sourceOwnerEmail
+ * @property {string | null} location
  */
 
 /**
@@ -27,6 +28,72 @@ function isObject(value) {
  */
 function asString(value) {
 	if (typeof value === "string" && value.trim()) return value;
+	return null;
+}
+
+function buildAddressString(address) {
+	if (!isObject(address)) return null;
+	const street = asString(address.Street ?? address.street ?? address.StreetAddress ?? address.streetAddress ?? address.Address ?? address.address);
+	const city = asString(address.City ?? address.city ?? address.Town ?? address.town);
+	const state = asString(address.State ?? address.state ?? address.Region ?? address.region);
+	const postal = asString(address.PostalCode ?? address.postalCode ?? address.Zip ?? address.zip);
+	const country = asString(address.CountryOrRegion ?? address.countryOrRegion ?? address.Country ?? address.country);
+
+	const cityState = [city, state].filter(Boolean).join(", ");
+	const cityStatePostal = [cityState, postal].filter(Boolean).join(" ");
+	const parts = [street, cityStatePostal, country].filter(Boolean);
+	if (!parts.length) return null;
+	return parts.join(", ");
+}
+
+function extractLocationCandidate(value) {
+	if (!value) return null;
+	if (typeof value === "string") return asString(value);
+	if (!isObject(value)) return null;
+
+	const address = buildAddressString(value.Address ?? value.address);
+	if (address) return address;
+
+	return (
+		asString(value.DisplayName ?? value.displayName) ??
+		asString(value.Name ?? value.name) ??
+		asString(value.Location ?? value.location) ??
+		asString(value.LocationName ?? value.locationName) ??
+		null
+	);
+}
+
+function extractLocation(node) {
+	if (!isObject(node)) return null;
+
+	const candidates = [];
+	const push = (value) => {
+		const next = extractLocationCandidate(value);
+		if (next) candidates.push(next);
+	};
+
+	push(node.Location ?? node.location);
+	push(node.EnhancedLocation ?? node.enhancedLocation);
+
+	const locations = node.Locations ?? node.locations ?? node.EnhancedLocations ?? node.enhancedLocations;
+	if (Array.isArray(locations)) {
+		for (const loc of locations) {
+			push(loc);
+			if (candidates.length) break;
+		}
+	}
+
+	push(node.LocationDisplayName ?? node.locationDisplayName);
+	push(node.LocationName ?? node.locationName);
+
+	if (!candidates.length) return null;
+	const seen = new Set();
+	for (const item of candidates) {
+		const key = item.trim();
+		if (!key || seen.has(key)) continue;
+		seen.add(key);
+		return item;
+	}
 	return null;
 }
 
@@ -176,6 +243,7 @@ export function extractOutlookEventsFromJson(json) {
 				asString(node.Organizer?.EmailAddress?.Address ?? node.organizer?.email ?? node.organizerEmail) ?? null;
 			const sourceCalendarName = asString(node.CalendarName ?? node.calendarName) ?? null;
 			const sourceOwnerEmail = asString(node.Owner?.EmailAddress?.Address ?? node.ownerEmail) ?? null;
+			const location = extractLocation(node);
 
 			const attendeeNames = extractAttendeeNames(
 				node.Attendees ?? node.attendees ?? node.RequiredAttendees ?? node.OptionalAttendees
@@ -200,6 +268,7 @@ export function extractOutlookEventsFromJson(json) {
 				organizerEmail,
 				sourceCalendarName,
 				sourceOwnerEmail,
+				location,
 			});
 		}
 
