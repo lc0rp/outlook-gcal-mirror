@@ -190,6 +190,47 @@ Notes:
 - Capture mode only sees what OWA loads during the capture window. If you need more coverage, increase `--capture-ms` and navigate weeks while it runs.
 - Only use `--mark-cancelled` in capture mode if you’re confident the capture covered the full time window.
 
+## Bi-directional sync (WIP MVP)
+
+This repo now includes `sync-bidir`, which syncs both ways using CLI tools:
+
+- Outlook side: `cli-365` (called via `go run ./cmd/cli-365`)
+- Google side: `gog` (`gog calendar ...`)
+
+### Requirements
+
+- `cli-365` checked out locally (default workdir: `/path/to/projects/cli-365`)
+- `gog` installed and authenticated (`gog auth ...`)
+- Outlook session available to `cli-365` (typically with `--cdp-port` and optional `--ensure-cdp`)
+
+### Run
+
+```bash
+node src/cli.js sync-bidir \
+  --google-calendar primary \
+  --cli365-workdir /path/to/projects/cli-365 \
+  --cli365-config ~/.config/cli-365/config.yaml \
+  --cli365-cdp-port 36429 \
+  --cli365-ensure-cdp \
+  --window-days 14 \
+  --lookback-days 1
+```
+
+Useful flags:
+
+- `--state-path <path>`: mapping state file (default: `~/.config/outlook-gcal-mirror/bidir-state.json`)
+- `--gog-account <email>`: pass-through to `gog --account`
+- `--dry-run`: compute plan without writes/state updates
+
+Current MVP behavior:
+
+- Create + update propagation both directions.
+- Identity matching for pre-existing unmatched events (`summary + start + end`).
+- Loop prevention via local state links (`outlookId <-> googleId`).
+- Conflict rule: if both sides changed since last sync, Outlook wins.
+- Deletion propagation is not implemented yet; missing linked events are recreated.
+- Legacy one-way mirror events on Google (`Mirrored from Outlook (read-only)`) are skipped.
+
 ## Config file
 
 Default path: `~/.config/outlook-gcal-mirror/config.json`
@@ -198,6 +239,7 @@ Notes:
 
 - Paths are treated literally (no `~` expansion). Use absolute paths in config.
 - Template files default to `~/.config/outlook-gcal-mirror/templates.json`.
+- Bidir state defaults to `~/.config/outlook-gcal-mirror/bidir-state.json`.
 
 A minimal config (what `setup` writes):
 

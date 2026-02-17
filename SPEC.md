@@ -55,6 +55,15 @@ Purpose: upsert the mirror calendar without sending any notifications.
 - Ensure the “Outlook Mirror” calendar exists (or select an existing one).
 - Upsert events into that calendar.
 
+### 3) `bidir-sync` (CLI-to-CLI reconciler, MVP)
+
+Purpose: sync Outlook and Google in both directions without direct SDK/API integration in this repo.
+
+- Outlook IO via `cli-365` CLI subprocess calls.
+- Google IO via `gog` CLI subprocess calls.
+- Local link state (`bidir-state.json`) tracks `outlookId <-> googleId` mappings + last fingerprint.
+- Existing unmatched events are linked by identity (`summary + start + end`) before creating duplicates.
+
 ## Data Model
 
 Normalized Outlook event fields used for sync:
@@ -70,6 +79,13 @@ Normalized Outlook event fields used for sync:
   - `ogm.sourceKey = <sourceKey>`
   - `ogm.status = active|cancelled`
 - Sync should be repeatable without creating duplicates.
+
+For bidirectional mode:
+
+- Local state file stores link pairs.
+- Google-created/updated events include private props:
+  - `ogm.link.outlookId`
+  - `ogm.link.version=1`
 
 ## Cancellation Behavior
 
@@ -104,8 +120,22 @@ A `sync` run should:
 - Upsert active events into the mirror calendar.
 - Mark missing prior mirrored events as cancelled.
 
+For `sync-bidir` (current MVP):
+
+- Read Outlook events from `cli-365 calendar list`.
+- Read Google events from `gog calendar events`.
+- Reconcile links:
+  - existing links first
+  - then identity-based linking
+  - then create missing counterparts
+- Propagate updates:
+  - one-sided change: push to other side
+  - two-sided change: Outlook wins (current policy)
+- Skip legacy one-way mirrored Google events (`Mirrored from Outlook (read-only)`).
+
 ## Open Questions / TBD
 
 - Exact OWA internal endpoint(s) and required headers/tokens (to be determined via discovery on User’s Mac).
 - Best strategy to enumerate events over a time range (OWA endpoint vs week-view paging).
 - How to represent recurring events (instance ids vs series ids) for stable mapping.
+- Deletion semantics for bidirectional sync (currently recreated, not propagated).
