@@ -299,6 +299,7 @@ Override behavior via env vars (see `scripts/mirror-all.js` for the full list).
 
 - Conventional Commits required (feat/fix/docs/refactor/perf/test/build/ci/chore/style).
 - Commit messages linted locally (husky) and in CI.
+- Local pre-push runs lint + tests.
 - CI on main creates tag + GitHub Release and writes CHANGELOG.md.
 - Local dry-run: `pnpm run release -- --dry-run --no-ci`.
 - No npm publish (private package).
