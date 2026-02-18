@@ -42,6 +42,15 @@ describe("providers/cli365", () => {
 		expect(call.args).toContain("--json");
 	});
 
+	it("defaults to cli-365 on PATH", async () => {
+		const runJson = vi.fn().mockResolvedValue({ Events: [] });
+		const client = createCli365Client({ runJson });
+		await client.listEvents();
+		const call = runJson.mock.calls[0][0];
+		expect(call.command).toBe("cli-365");
+		expect(call.cwd).toBeUndefined();
+	});
+
 	it("updateEvent recreates on known update failure", async () => {
 		const runJson = vi
 			.fn()

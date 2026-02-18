@@ -157,36 +157,26 @@ node src/cli.js fetch-owa --json
 
 ### 7) Run a sync
 
-Capture mode (default):
+CLI mode (default; uses `cli-365` on PATH):
 
 ```bash
 node src/cli.js sync \
-  --cdp-port 9222 \
-  --engine playwright \
-  --source capture \
-  --capture-ms 30000 \
+  --source cli365 \
+  --cli365-cdp-port 36429 \
+  --cli365-ensure-cdp \
   --google-credentials /path/to/client_secret.json \
   --calendar "Outlook Mirror" \
   --window-days 14
 ```
 
-Template mode (recommended once you have a stable endpoint):
+Legacy OWA modes still available: `--source capture` and `--source template`.
 
-```bash
-node src/cli.js sync \
-  --cdp-port 9222 \
-  --engine playwright \
-  --source template \
-  --google-credentials /path/to/client_secret.json \
-  --calendar "Outlook Mirror" \
-  --window-days 14
-```
 
 Notes:
 
 - `--calendar` accepts a calendar id or name; id match is attempted first. If the calendar doesn’t exist, it will be created.
 - `--lookback-days` (default: 1) includes recently-started events.
-- `--ensure-cdp` will start keepalive if CDP isn’t running and wait for login (stops keepalive when done).
+- `--cli365-ensure-cdp` asks `cli-365` to start/connect CDP and wait for login.
 - Capture mode only sees what OWA loads during the capture window. If you need more coverage, increase `--capture-ms` and navigate weeks while it runs.
 - Only use `--mark-cancelled` in capture mode if you’re confident the capture covered the full time window.
 
@@ -194,21 +184,19 @@ Notes:
 
 This repo now includes `sync-bidir`, which syncs both ways using CLI tools:
 
-- Outlook side: `cli-365` (called via `go run ./cmd/cli-365`)
+- Outlook side: `cli-365` (called as a subprocess from PATH)
 - Google side: `gog` (`gog calendar ...`)
 
 ### Requirements
 
-- `cli-365` checked out locally (default workdir: `/path/to/projects/cli-365`)
 - `gog` installed and authenticated (`gog auth ...`)
-- Outlook session available to `cli-365` (typically with `--cdp-port` and optional `--ensure-cdp`)
+- Outlook session available to `cli-365` (typically with `--cli365-cdp-port` and optional `--cli365-ensure-cdp`).
 
 ### Run
 
 ```bash
 node src/cli.js sync-bidir \
   --google-calendar primary \
-  --cli365-workdir /path/to/projects/cli-365 \
   --cli365-config ~/.config/cli-365/config.yaml \
   --cli365-cdp-port 36429 \
   --cli365-ensure-cdp \
@@ -306,3 +294,10 @@ pnpm run mirror:all
 ```
 
 Override behavior via env vars (see `scripts/mirror-all.js` for the full list).
+
+## Release (semantic-release)
+
+- Conventional Commits required (feat/fix/docs/refactor/perf/test/build/ci/chore/style).
+- CI on main creates tag + GitHub Release and writes CHANGELOG.md.
+- Local dry-run: `pnpm run release -- --dry-run --no-ci`.
+- No npm publish (private package).

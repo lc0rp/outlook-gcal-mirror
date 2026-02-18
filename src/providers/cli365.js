@@ -116,9 +116,11 @@ function buildBaseArgs(options) {
  * }} options
  */
 export function createCli365Client(options = {}) {
-	const command = options.command ?? "go";
-	const commandArgs = options.commandArgs ?? ["run", "./cmd/cli-365"];
-	const workdir = options.workdir ?? DEFAULT_CLI365_WORKDIR;
+	const command = options.command ?? "cli-365";
+	const commandArgs = options.commandArgs ?? [];
+	const workdir =
+		options.workdir ??
+		(command === "go" || commandArgs.includes("./cmd/cli-365") ? DEFAULT_CLI365_WORKDIR : undefined);
 	const runJson = options.runJson ?? runJsonCommand;
 	const runText = options.runText ?? runCommand;
 	const baseArgs = buildBaseArgs(options);

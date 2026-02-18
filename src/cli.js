@@ -27,6 +27,7 @@ import { captureOwaEvents } from "./owa/capture.js";
 import { fetchOwaEventsByTemplate, fetchOwaEventsByTemplates } from "./owa/events.js";
 import { loadTemplateFromFile, saveTemplatesFile } from "./owa/templates.js";
 import { shouldSyncEvent } from "./sync/filters.js";
+import { cli365EventToNormalized } from "./sync/outlook.js";
 import {
 	findCalendarId,
 	getGoogleSyncContext,
@@ -36,7 +37,7 @@ import {
 	upsertMirroredEvent,
 	PRIVATE_SOURCE_KEY,
 } from "./sync/google.js";
-import { createCli365Client, DEFAULT_CLI365_WORKDIR } from "./providers/cli365.js";
+import { createCli365Client } from "./providers/cli365.js";
 import { createGogClient } from "./providers/gog.js";
 import { loadBidirState, saveBidirState } from "./sync/bidir-state.js";
 import { runBidirectionalSync } from "./sync/bidir.js";
@@ -101,16 +102,15 @@ function parseEngine(value) {
 
 /**
  * @param {unknown} value
- * @returns {"capture" | "template"}
+ * @returns {"capture" | "template" | "cli365"}
  */
 function parseSource(value) {
 	const v = String(value ?? "").trim().toLowerCase();
-	if (v === "capture" || v === "template") return /** @type {any} */ (v);
-	throw new UserError("--source must be 'capture' or 'template'");
+	if (v === "capture" || v === "template" || v === "cli365") return /** @type {any} */ (v);
+	throw new UserError("--source must be 'capture', 'template', or 'cli365'");
 }
 
 const MIRROR_MARKER = "Mirrored from Outlook (read-only)";
-
 function sleep(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -627,7 +627,7 @@ function buildProgram() {
 		.option("-p, --cdp-port <port>", "CDP port (overrides config)")
 		.option("--engine <engine>", "playwright|puppeteer (overrides config)")
 		.option("--target-url <url>", "OWA calendar URL (overrides config)")
-		.option("--source <source>", "Event source: capture|template", "capture")
+		.option("--source <source>", "Event source: cli365|capture|template", "cli365")
 		.option("--capture-ms <ms>", "How long to capture OWA JSON (capture source only)", "15000")
 		.option(
 			"--url-includes <substr>",
@@ -635,6 +635,12 @@ function buildProgram() {
 			"outlook.office.com"
 		)
 		.option("--no-url-filter", "Do not filter responses by URL (capture source only)")
+		.option("--cli365-bin <path>", "cli-365 binary on PATH", "cli-365")
+		.option("--cli365-config <path>", "cli-365 config path")
+		.option("--cli365-cdp-port <port>", "cli-365 CDP port (defaults to --cdp-port)")
+		.option("--cli365-folder <id>", "cli-365 calendar folder id")
+		.option("--cli365-ensure-cdp", "Pass --ensure-cdp to cli-365")
+		.option("--cli365-ensure-cdp-timeout <duration>", "Pass --ensure-cdp-timeout to cli-365")
 		.option("--google-credentials <path>", "Google OAuth credentials JSON (overrides config)")
 		.option("--google-token <path>", "Google token JSON path (overrides config)")
 		.option("--calendar <idOrName>", "Destination Google calendar (id or name; overrides config)")
@@ -686,165 +692,194 @@ function buildProgram() {
 				);
 			}
 
-			let viewTemplate = null;
-			let eventTemplate = null;
-			if (source === "capture") {
-				console.info("Capturing events from Outlook Web.");
-				console.info("Tip: while capturing, click events / navigate weeks so OWA loads JSON.");
-			} else {
-				console.info("Fetching events from Outlook Web using request templates.");
-				({ viewTemplate, eventTemplate } = await resolveOwaTemplates(cfg));
-				if (!viewTemplate) {
-					throw new UserError(
-						"Missing Outlook request template. Run 'discover-owa' or 'discover-owa-log --save-templates' and set outlook.owaRequestTemplate (or outlook.owaTemplatesPath)."
-					);
-				}
-				if (!eventTemplate) {
-					console.info("Note: event details template not found; attendee names may be missing.");
-				}
-			}
+			let events = [];
 
-			let keepaliveProc = null;
-			let startedKeepalive = false;
+			if (source === "cli365") {
+				const cli365Bin = normalizePath(opts.cli365Bin) ?? "cli-365";
+				const cli365ConfigPath = normalizePath(opts.cli365Config ?? cfg?.bidir?.cli365ConfigPath);
+				const cli365CdpPort = validateCdpPort(opts.cli365CdpPort ?? cdpPort);
+				const cli365Folder = normalizePath(opts.cli365Folder);
+				const cli365EnsureCdp = opts.cli365EnsureCdp !== undefined ? !!opts.cli365EnsureCdp : ensureCdp;
+				const cli365EnsureCdpTimeout = normalizePath(
+					opts.cli365EnsureCdpTimeout ?? cfg?.bidir?.cli365EnsureCdpTimeout
+				);
 
-			if (ensureCdp) {
-				try {
-					await waitForCdpReady({ port: cdpPort, timeoutMs: 1000 });
-				} catch {
-					console.info("[ensure-cdp] CDP unavailable; starting keepalive...");
-					const args = [
-						process.argv[1],
-						"keepalive",
-						"--target-url",
-						targetUrl,
-						"--engine",
-						engine,
-						"--cdp-port",
-						String(cdpPort),
-					];
-					keepaliveProc = spawn(process.execPath, args, { stdio: "inherit" });
-					startedKeepalive = true;
-					await waitForCdpReady({ port: cdpPort, timeoutMs: ensureCdpTimeoutMs });
-				}
-
-				const resolvedTargetUrl = await waitForOutlookLogin({
-					engine,
-					port: cdpPort,
-					targetUrl,
-					timeoutMs: ensureCdpTimeoutMs,
+				console.info("Fetching events from Outlook via cli-365.");
+				const outlookClient = createCli365Client({
+					command: cli365Bin,
+					configPath: cli365ConfigPath ?? undefined,
+					cdpPort: cli365CdpPort,
+					ensureCdp: cli365EnsureCdp,
+					ensureCdpTimeout: cli365EnsureCdpTimeout ?? undefined,
 				});
-				if (resolvedTargetUrl) {
-					effectiveTargetUrl = resolvedTargetUrl;
-				}
-			}
 
-			let conn = null;
-			try {
-				conn = await connectOverCdp({ engine, port: cdpPort, targetUrl: effectiveTargetUrl });
-				try {
-					const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
-					console.info(`Using tab: ${pageUrl}`);
-
-					let events;
-					if (source === "capture") {
-						events = await captureOwaEvents({ page: conn.page, durationMs: captureMs, urlIncludes });
-					} else {
-						events = await fetchOwaEventsByTemplates({
-							page: conn.page,
-							viewTemplate: viewTemplate,
-							eventTemplate,
-							range,
-							templateVars: cfg?.outlook?.owaTemplateVars,
-						});
-					}
-
-					if (cfg?.outlook) {
-						events = events.filter((ev) =>
-							shouldSyncEvent(ev, {
-								includeCalendars: cfg.outlook.includeCalendars,
-								skipCalendars: cfg.outlook.skipCalendars,
-								includeOwnerEmails: cfg.outlook.includeOwnerEmails,
-								skipOwnerEmails: cfg.outlook.skipOwnerEmails,
-							})
+				const pulled = await outlookClient.listEvents({
+					start: range.start.toISOString(),
+					end: range.end.toISOString(),
+					limit: 1000,
+					folder: cli365Folder ?? undefined,
+				});
+				events = pulled.map(cli365EventToNormalized);
+			} else {
+				let viewTemplate = null;
+				let eventTemplate = null;
+				if (source === "capture") {
+					console.info("Capturing events from Outlook Web.");
+					console.info("Tip: while capturing, click events / navigate weeks so OWA loads JSON.");
+				} else {
+					console.info("Fetching events from Outlook Web using request templates.");
+					({ viewTemplate, eventTemplate } = await resolveOwaTemplates(cfg));
+					if (!viewTemplate) {
+						throw new UserError(
+							"Missing Outlook request template. Run 'discover-owa' or 'discover-owa-log --save-templates' and set outlook.owaRequestTemplate (or outlook.owaTemplatesPath)."
 						);
 					}
-
-					console.info(`Extracted ${events.length} event(s) after filtering.`);
-
-					if (logEvents) {
-						for (const ev of events) {
-							console.info(`PULL: ${formatEventSummary(ev)}`);
-						}
-					}
-
-					if (opts.dryRun) {
-						for (const ev of events) {
-							console.info(`DRY RUN: would mirror: ${formatEventSummary(ev)} [${ev.sourceKey}]`);
-						}
-						return;
-					}
-
-					const { calendar, calendarId } = await getGoogleSyncContext({
-						credentialsPath: /** @type {string} */ (credentialsPath),
-						tokenPath,
-						calendarRef,
-					});
-
-					let created = 0;
-					let updated = 0;
-					for (const ev of events) {
-						const res = await upsertMirroredEvent({ calendar, calendarId, ev });
-						if (res.action === "created") created += 1;
-						if (res.action === "updated") updated += 1;
-						if (logEvents) {
-							console.info(`SYNC (${res.action}): ${formatEventSummary(ev)}`);
-						}
-					}
-
-					console.info(`Upsert complete. created=${created} updated=${updated}`);
-
-					if (!markCancelled) return;
-
-					console.info("mark-cancelled enabled: listing mirror events and cancelling missing source keys.");
-					if (source === "capture") {
-						console.info(
-							"Warning: capture mode is partial by nature; only enable this if you're confident the capture covered the full time window."
-						);
-					}
-
-					const { timeMin, timeMax } = toTimeRangeIso(range);
-					const mirrorEvents = await listMirrorEvents({
-						calendar,
-						calendarId,
-						timeMin,
-						timeMax,
-						query: "Mirrored from Outlook",
-					});
-
-					const present = new Set(events.map((e) => e.sourceKey));
-					let cancelled = 0;
-					for (const gcalEv of mirrorEvents) {
-						const sourceKey = gcalEv.extendedProperties?.private?.[PRIVATE_SOURCE_KEY];
-						if (!sourceKey || typeof sourceKey !== "string") continue;
-						if (present.has(sourceKey)) continue;
-						const res = await markMirroredCancelled({ calendar, calendarId, gcalEvent: gcalEv });
-						if (res.action === "cancelled") cancelled += 1;
-					}
-					console.info(`Cancelled ${cancelled} mirror event(s) not present in scan.`);
-				} finally {
-					if (conn) {
-						await disconnectBestEffort(conn.browser);
+					if (!eventTemplate) {
+						console.info("Note: event details template not found; attendee names may be missing.");
 					}
 				}
-			} finally {
-				if (startedKeepalive && keepaliveProc) {
+
+				let keepaliveProc = null;
+				let startedKeepalive = false;
+
+				if (ensureCdp) {
 					try {
-						keepaliveProc.kill("SIGTERM");
+						await waitForCdpReady({ port: cdpPort, timeoutMs: 1000 });
 					} catch {
-						// ignore
+						console.info("[ensure-cdp] CDP unavailable; starting keepalive...");
+						const args = [
+							process.argv[1],
+							"keepalive",
+							"--target-url",
+							targetUrl,
+							"--engine",
+							engine,
+							"--cdp-port",
+							String(cdpPort),
+						];
+						keepaliveProc = spawn(process.execPath, args, { stdio: "inherit" });
+						startedKeepalive = true;
+						await waitForCdpReady({ port: cdpPort, timeoutMs: ensureCdpTimeoutMs });
+					}
+
+					const resolvedTargetUrl = await waitForOutlookLogin({
+						engine,
+						port: cdpPort,
+						targetUrl,
+						timeoutMs: ensureCdpTimeoutMs,
+					});
+					if (resolvedTargetUrl) {
+						effectiveTargetUrl = resolvedTargetUrl;
+					}
+				}
+
+				let conn = null;
+				try {
+					conn = await connectOverCdp({ engine, port: cdpPort, targetUrl: effectiveTargetUrl });
+					try {
+						const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
+						console.info(`Using tab: ${pageUrl}`);
+
+						if (source === "capture") {
+							events = await captureOwaEvents({ page: conn.page, durationMs: captureMs, urlIncludes });
+						} else {
+							events = await fetchOwaEventsByTemplates({
+								page: conn.page,
+								viewTemplate: viewTemplate,
+								eventTemplate,
+								range,
+								templateVars: cfg?.outlook?.owaTemplateVars,
+							});
+						}
+					} finally {
+						if (conn) {
+							await disconnectBestEffort(conn.browser);
+						}
+					}
+				} finally {
+					if (startedKeepalive && keepaliveProc) {
+						try {
+							keepaliveProc.kill("SIGTERM");
+						} catch {
+							// ignore
+						}
 					}
 				}
 			}
+
+			if (cfg?.outlook) {
+				events = events.filter((ev) =>
+					shouldSyncEvent(ev, {
+						includeCalendars: cfg.outlook.includeCalendars,
+						skipCalendars: cfg.outlook.skipCalendars,
+						includeOwnerEmails: cfg.outlook.includeOwnerEmails,
+						skipOwnerEmails: cfg.outlook.skipOwnerEmails,
+					})
+				);
+			}
+
+			console.info(`Extracted ${events.length} event(s) after filtering.`);
+
+			if (logEvents) {
+				for (const ev of events) {
+					console.info(`PULL: ${formatEventSummary(ev)}`);
+				}
+			}
+
+			if (opts.dryRun) {
+				for (const ev of events) {
+					console.info(`DRY RUN: would mirror: ${formatEventSummary(ev)} [${ev.sourceKey}]`);
+				}
+				return;
+			}
+
+			const { calendar, calendarId } = await getGoogleSyncContext({
+				credentialsPath: /** @type {string} */ (credentialsPath),
+				tokenPath,
+				calendarRef,
+			});
+
+			let created = 0;
+			let updated = 0;
+			for (const ev of events) {
+				const res = await upsertMirroredEvent({ calendar, calendarId, ev });
+				if (res.action === "created") created += 1;
+				if (res.action === "updated") updated += 1;
+				if (logEvents) {
+					console.info(`SYNC (${res.action}): ${formatEventSummary(ev)}`);
+				}
+			}
+
+			console.info(`Upsert complete. created=${created} updated=${updated}`);
+
+			if (!markCancelled) return;
+
+			console.info("mark-cancelled enabled: listing mirror events and cancelling missing source keys.");
+			if (source === "capture") {
+				console.info(
+					"Warning: capture mode is partial by nature; only enable this if you're confident the capture covered the full time window."
+				);
+			}
+
+			const { timeMin, timeMax } = toTimeRangeIso(range);
+			const mirrorEvents = await listMirrorEvents({
+				calendar,
+				calendarId,
+				timeMin,
+				timeMax,
+				query: "Mirrored from Outlook",
+			});
+
+			const present = new Set(events.map((e) => e.sourceKey));
+			let cancelled = 0;
+			for (const gcalEv of mirrorEvents) {
+				const sourceKey = gcalEv.extendedProperties?.private?.[PRIVATE_SOURCE_KEY];
+				if (!sourceKey || typeof sourceKey !== "string") continue;
+				if (present.has(sourceKey)) continue;
+				const res = await markMirroredCancelled({ calendar, calendarId, gcalEvent: gcalEv });
+				if (res.action === "cancelled") cancelled += 1;
+			}
+			console.info(`Cancelled ${cancelled} mirror event(s) not present in scan.`);
 		});
 
 	program
@@ -881,7 +916,7 @@ function buildProgram() {
 			const statePath = normalizePath(opts.statePath ?? cfg?.bidir?.statePath) ?? DEFAULT_BIDIR_STATE_PATH;
 			const logEvents = opts.logEvents !== false;
 
-			const cli365Workdir = normalizePath(opts.cli365Workdir ?? cfg?.bidir?.cli365Workdir) ?? DEFAULT_CLI365_WORKDIR;
+			const cli365Workdir = normalizePath(opts.cli365Workdir ?? cfg?.bidir?.cli365Workdir);
 			const cli365ConfigPath = normalizePath(opts.cli365Config ?? cfg?.bidir?.cli365ConfigPath);
 			const cli365EnsureCdp =
 				opts.cli365EnsureCdp !== undefined ? !!opts.cli365EnsureCdp : !!cfg?.bidir?.cli365EnsureCdp;
@@ -902,7 +937,7 @@ function buildProgram() {
 			);
 
 			const outlookClient = createCli365Client({
-				workdir: cli365Workdir,
+				workdir: cli365Workdir ?? undefined,
 				configPath: cli365ConfigPath ?? undefined,
 				cdpPort: cli365CdpPort,
 				ensureCdp: cli365EnsureCdp,
