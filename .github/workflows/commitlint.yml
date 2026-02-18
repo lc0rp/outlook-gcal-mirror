@@ -1,0 +1,45 @@
+name: commitlint
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: setup-pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: setup-node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      - name: set-range (push)
+        if: github.event_name == 'push'
+        run: |
+          echo "FROM=${{ github.event.before }}" >> $GITHUB_ENV
+          echo "TO=${{ github.sha }}" >> $GITHUB_ENV
+
+      - name: set-range (pr)
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "FROM=${{ github.event.pull_request.base.sha }}" >> $GITHUB_ENV
+          echo "TO=${{ github.event.pull_request.head.sha }}" >> $GITHUB_ENV
+
+      - name: commitlint
+        run: pnpm commitlint --from "$FROM" --to "$TO" --verbose
