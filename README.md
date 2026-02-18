@@ -12,18 +12,19 @@ Constraints:
 
 See `SPEC.md` for the current mini-spec and decisions.
 
-This repo is split conceptually into two layers:
+This repo is split conceptually into three layers:
 
-1. **OWA in-browser client** (`src/owa/*`)
+1. **CLI providers** (`src/providers/*`)
+   - Outlook reads/writes via `cli-365` subprocesses.
+   - Google reads/writes via `gog` subprocesses (for bidirectional sync).
 
-   - Extracts events by either:
-     - capturing OWA JSON responses (passive; depends on what the UI loads), or
-     - running `fetch()` inside the tab using existing cookies/session (deterministic once you have a stable internal endpoint).
-   - Supports a **discovery** mode to help identify OWA’s internal JSON endpoints.
+2. **OWA tooling** (`src/owa/*`)
+   - Discovery/capture/template-based fetch helpers for debugging and endpoint discovery.
+   - Uses CDP against a real logged-in Outlook Web tab.
 
-2. **Google Calendar sync** (`src/google/*`, `src/sync/*`)
-   - Upserts events into a dedicated Google calendar (default name: `Outlook Mirror`).
-   - Stores a stable source id in `extendedProperties.private` for idempotency.
+3. **Google Calendar sync** (`src/google/*`, `src/sync/*`)
+   - One-way `sync`: Outlook (`cli-365`) -> Google Calendar mirror.
+   - Bidirectional `sync-bidir`: `cli-365` <-> `gog` reconciliation + link state.
 
 ## Quickstart (recommended)
 
@@ -161,7 +162,6 @@ CLI mode (default; uses `cli-365` on PATH):
 
 ```bash
 node src/cli.js sync \
-  --source cli365 \
   --cli365-cdp-port 36429 \
   --cli365-ensure-cdp \
   --google-credentials /path/to/client_secret.json \
@@ -169,16 +169,15 @@ node src/cli.js sync \
   --window-days 14
 ```
 
-Legacy OWA modes still available: `--source capture` and `--source template`.
 
 
 Notes:
 
+- `sync` reads Outlook events via `cli-365` only.
 - `--calendar` accepts a calendar id or name; id match is attempted first. If the calendar doesn’t exist, it will be created.
 - `--lookback-days` (default: 1) includes recently-started events.
 - `--cli365-ensure-cdp` asks `cli-365` to start/connect CDP and wait for login.
-- Capture mode only sees what OWA loads during the capture window. If you need more coverage, increase `--capture-ms` and navigate weeks while it runs.
-- Only use `--mark-cancelled` in capture mode if you’re confident the capture covered the full time window.
+- For direct OWA extraction/debugging, use `capture-owa` or `fetch-owa`.
 
 ## Bi-directional sync (WIP MVP)
 

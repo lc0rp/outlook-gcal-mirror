@@ -42,13 +42,44 @@ describe("providers/cli365", () => {
 		expect(call.args).toContain("--json");
 	});
 
-	it("defaults to cli-365 on PATH", async () => {
+	it("defaults to cli-365 on PATH and does not add CDP flags", async () => {
 		const runJson = vi.fn().mockResolvedValue({ Events: [] });
 		const client = createCli365Client({ runJson });
 		await client.listEvents();
 		const call = runJson.mock.calls[0][0];
 		expect(call.command).toBe("cli-365");
 		expect(call.cwd).toBeUndefined();
+		expect(call.args).not.toContain("--cdp-port");
+		expect(call.args).not.toContain("--ensure-cdp");
+		expect(call.args).not.toContain("--ensure-cdp-timeout");
+	});
+
+	it("passes CDP flags only when explicitly configured", async () => {
+		const runJson = vi.fn().mockResolvedValue({ Events: [] });
+		const client = createCli365Client({
+			runJson,
+			configPath: "/tmp/cli-365.yaml",
+			cdpPort: 36429,
+			ensureCdp: true,
+			ensureCdpTimeout: "2m",
+		});
+
+		await client.listEvents();
+		const call = runJson.mock.calls[0][0];
+		expect(call.args).toEqual(
+			expect.arrayContaining([
+				"--json",
+				"--config",
+				"/tmp/cli-365.yaml",
+				"--cdp-port",
+				"36429",
+				"--ensure-cdp",
+				"--ensure-cdp-timeout",
+				"2m",
+				"calendar",
+				"list",
+			])
+		);
 	});
 
 	it("updateEvent recreates on known update failure", async () => {

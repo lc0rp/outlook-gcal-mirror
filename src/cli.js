@@ -2,7 +2,6 @@
 
 import { Command } from "commander";
 import process from "node:process";
-import { spawn } from "node:child_process";
 
 import { connectOverCdp } from "./cdp/index.js";
 import { UserError } from "./errors.js";
@@ -47,7 +46,6 @@ const DEFAULT_TARGET_URLS = [
 	"https://outlook.cloud.microsoft/calendar/view/week",
 ];
 const DEFAULT_TARGET_URL = DEFAULT_TARGET_URLS[0];
-const TARGET_HOST_SUFFIXES = ["office.com", "cloud.microsoft"];
 
 /**
  * @param {unknown} value
@@ -100,109 +98,7 @@ function parseEngine(value) {
 	throw new UserError("--engine must be 'playwright' or 'puppeteer'");
 }
 
-/**
- * @param {unknown} value
- * @returns {"capture" | "template" | "cli365"}
- */
-function parseSource(value) {
-	const v = String(value ?? "").trim().toLowerCase();
-	if (v === "capture" || v === "template" || v === "cli365") return /** @type {any} */ (v);
-	throw new UserError("--source must be 'capture', 'template', or 'cli365'");
-}
-
 const MIRROR_MARKER = "Mirrored from Outlook (read-only)";
-function sleep(ms) {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForCdpReady({ port, timeoutMs }) {
-	const startedAt = Date.now();
-	const url = `http://127.0.0.1:${port}/json/version`;
-	let lastErr;
-
-	while (Date.now() - startedAt < timeoutMs) {
-		try {
-			const res = await fetch(url, { headers: { accept: "application/json" } });
-			if (res.ok) return true;
-			lastErr = new Error(`HTTP ${res.status}`);
-		} catch (err) {
-			lastErr = err;
-		}
-		await sleep(500);
-	}
-
-	throw lastErr ?? new Error(`Timed out waiting for CDP at ${url}`);
-}
-
-function normalizeTargetUrlForMatch(url) {
-	if (!url) return null;
-	try {
-		const parsed = new URL(url);
-		parsed.search = "";
-		parsed.hash = "";
-		return parsed.toString();
-	} catch {
-		return null;
-	}
-}
-
-function isAllowedTargetHost(host, targetUrl) {
-	if (!host) return false;
-	if (targetUrl) {
-		try {
-			if (new URL(targetUrl).host === host) return true;
-		} catch {
-			// ignore
-		}
-	}
-	return TARGET_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
-}
-
-function shouldWaitForLogin(url, targetUrl) {
-	if (!url) return true;
-	const lower = String(url).toLowerCase();
-	if (
-		lower.includes("login") ||
-		lower.includes("signin") ||
-		lower.includes("microsoftonline") ||
-		lower.includes("oauth") ||
-		lower.includes("account")
-	) {
-		return true;
-	}
-	try {
-		const pageHost = new URL(url).host;
-		if (!isAllowedTargetHost(pageHost, targetUrl)) return true;
-	} catch {
-		// ignore
-	}
-	return false;
-}
-
-async function waitForOutlookLogin({ engine, port, targetUrl, timeoutMs }) {
-	const startedAt = Date.now();
-	let lastUrl = null;
-	while (Date.now() - startedAt < timeoutMs) {
-		try {
-			const conn = await connectOverCdp({ engine, port, targetUrl });
-			const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
-			lastUrl = pageUrl ?? null;
-			await disconnectBestEffort(conn.browser);
-			if (!shouldWaitForLogin(pageUrl, targetUrl)) {
-				return (
-					normalizeTargetUrlForMatch(pageUrl) ??
-					normalizeTargetUrlForMatch(targetUrl)
-				);
-			}
-		} catch {
-			// ignore; we'll retry until timeout
-		}
-		console.info("[ensure-cdp] waiting for Outlook login...");
-		await sleep(2000);
-	}
-
-	throw new UserError(`Timed out waiting for Outlook login. Last URL: ${lastUrl ?? "unknown"}`);
-}
 
 function looksLikeMirroredEvent(event, { requireMarker = true } = {}) {
 	const sourceKey = event?.extendedProperties?.private?.[PRIVATE_SOURCE_KEY];
@@ -623,21 +519,10 @@ function buildProgram() {
 
 	program
 		.command("sync")
-		.description("Read events from OWA and mirror them to Google Calendar")
-		.option("-p, --cdp-port <port>", "CDP port (overrides config)")
-		.option("--engine <engine>", "playwright|puppeteer (overrides config)")
-		.option("--target-url <url>", "OWA calendar URL (overrides config)")
-		.option("--source <source>", "Event source: cli365|capture|template", "cli365")
-		.option("--capture-ms <ms>", "How long to capture OWA JSON (capture source only)", "15000")
-		.option(
-			"--url-includes <substr>",
-			"Only consider responses whose URL contains this substring (capture source only)",
-			"outlook.office.com"
-		)
-		.option("--no-url-filter", "Do not filter responses by URL (capture source only)")
+		.description("Read events from Outlook via cli-365 and mirror them to Google Calendar")
 		.option("--cli365-bin <path>", "cli-365 binary on PATH", "cli-365")
 		.option("--cli365-config <path>", "cli-365 config path")
-		.option("--cli365-cdp-port <port>", "cli-365 CDP port (defaults to --cdp-port)")
+		.option("--cli365-cdp-port <port>", "cli-365 CDP port")
 		.option("--cli365-folder <id>", "cli-365 calendar folder id")
 		.option("--cli365-ensure-cdp", "Pass --ensure-cdp to cli-365")
 		.option("--cli365-ensure-cdp-timeout <duration>", "Pass --ensure-cdp-timeout to cli-365")
@@ -648,8 +533,6 @@ function buildProgram() {
 		.option("--window-days <n>", "Days ahead to mirror (overrides config)")
 		.option("--lookback-days <n>", "Days back to include when listing mirror events", "1")
 		.option("--mark-cancelled", "Mark missing mirrored events as CANCELLED")
-		.option("--ensure-cdp", "Start keepalive if CDP is unavailable and wait for login")
-		.option("--ensure-cdp-timeout <ms>", "How long to wait for CDP/login when --ensure-cdp is set", "300000")
 		.option("--dry-run", "Do not write to Google; print what would happen")
 		.option("--no-log-events", "Disable per-event logging")
 		.action(async (opts) => {
@@ -662,14 +545,6 @@ function buildProgram() {
 				// allow running without config if flags are provided
 			}
 
-			const cdpPort = validateCdpPort(opts.cdpPort ?? cfg?.outlook?.cdpPort ?? 9222);
-			const engine = parseEngine(opts.engine ?? cfg?.outlook?.engine ?? "playwright");
-			const targetUrl = validateAbsoluteUrl(opts.targetUrl ?? cfg?.outlook?.targetUrl ?? DEFAULT_TARGET_URL);
-			let effectiveTargetUrl = targetUrl;
-			const source = parseSource(opts.source);
-
-			const captureMs = parsePositiveInt(opts.captureMs, "--capture-ms") ?? 15000;
-			const urlIncludes = opts.urlFilter === false ? null : String(opts.urlIncludes ?? "outlook.office.com");
 			const windowDays =
 				parsePositiveInt(opts.windowDays ?? cfg?.sync?.windowDays, "--window-days") ?? 14;
 			const lookbackDays = parsePositiveInt(opts.lookbackDays, "--lookback-days") ?? 1;
@@ -682,8 +557,6 @@ function buildProgram() {
 			);
 
 			const markCancelled = opts.markCancelled !== undefined ? !!opts.markCancelled : !!cfg?.sync?.markCancelled;
-			const ensureCdp = !!opts.ensureCdp;
-			const ensureCdpTimeoutMs = parsePositiveInt(opts.ensureCdpTimeout, "--ensure-cdp-timeout") ?? 300000;
 			const logEvents = opts.logEvents !== false;
 
 			if (!opts.dryRun && !credentialsPath) {
@@ -694,118 +567,33 @@ function buildProgram() {
 
 			let events = [];
 
-			if (source === "cli365") {
-				const cli365Bin = normalizePath(opts.cli365Bin) ?? "cli-365";
-				const cli365ConfigPath = normalizePath(opts.cli365Config ?? cfg?.bidir?.cli365ConfigPath);
-				const cli365CdpPort = validateCdpPort(opts.cli365CdpPort ?? cdpPort);
-				const cli365Folder = normalizePath(opts.cli365Folder);
-				const cli365EnsureCdp = opts.cli365EnsureCdp !== undefined ? !!opts.cli365EnsureCdp : ensureCdp;
-				const cli365EnsureCdpTimeout = normalizePath(
-					opts.cli365EnsureCdpTimeout ?? cfg?.bidir?.cli365EnsureCdpTimeout
-				);
+			const cli365Bin = normalizePath(opts.cli365Bin) ?? "cli-365";
+			const cli365ConfigPath = normalizePath(opts.cli365Config ?? cfg?.bidir?.cli365ConfigPath);
+			const cli365CdpPort =
+				opts.cli365CdpPort !== undefined ? validateCdpPort(opts.cli365CdpPort) : undefined;
+			const cli365Folder = normalizePath(opts.cli365Folder);
+			const cli365EnsureCdp = opts.cli365EnsureCdp === true;
+			const cli365EnsureCdpTimeout =
+				opts.cli365EnsureCdpTimeout !== undefined
+					? normalizePath(opts.cli365EnsureCdpTimeout)
+					: null;
 
-				console.info("Fetching events from Outlook via cli-365.");
-				const outlookClient = createCli365Client({
-					command: cli365Bin,
-					configPath: cli365ConfigPath ?? undefined,
-					cdpPort: cli365CdpPort,
-					ensureCdp: cli365EnsureCdp,
-					ensureCdpTimeout: cli365EnsureCdpTimeout ?? undefined,
-				});
+			console.info("Fetching events from Outlook via cli-365.");
+			const outlookClient = createCli365Client({
+				command: cli365Bin,
+				configPath: cli365ConfigPath ?? undefined,
+				cdpPort: cli365CdpPort,
+				ensureCdp: cli365EnsureCdp,
+				ensureCdpTimeout: cli365EnsureCdpTimeout ?? undefined,
+			});
 
-				const pulled = await outlookClient.listEvents({
-					start: range.start.toISOString(),
-					end: range.end.toISOString(),
-					limit: 1000,
-					folder: cli365Folder ?? undefined,
-				});
-				events = pulled.map(cli365EventToNormalized);
-			} else {
-				let viewTemplate = null;
-				let eventTemplate = null;
-				if (source === "capture") {
-					console.info("Capturing events from Outlook Web.");
-					console.info("Tip: while capturing, click events / navigate weeks so OWA loads JSON.");
-				} else {
-					console.info("Fetching events from Outlook Web using request templates.");
-					({ viewTemplate, eventTemplate } = await resolveOwaTemplates(cfg));
-					if (!viewTemplate) {
-						throw new UserError(
-							"Missing Outlook request template. Run 'discover-owa' or 'discover-owa-log --save-templates' and set outlook.owaRequestTemplate (or outlook.owaTemplatesPath)."
-						);
-					}
-					if (!eventTemplate) {
-						console.info("Note: event details template not found; attendee names may be missing.");
-					}
-				}
-
-				let keepaliveProc = null;
-				let startedKeepalive = false;
-
-				if (ensureCdp) {
-					try {
-						await waitForCdpReady({ port: cdpPort, timeoutMs: 1000 });
-					} catch {
-						console.info("[ensure-cdp] CDP unavailable; starting keepalive...");
-						const args = [
-							process.argv[1],
-							"keepalive",
-							"--target-url",
-							targetUrl,
-							"--engine",
-							engine,
-							"--cdp-port",
-							String(cdpPort),
-						];
-						keepaliveProc = spawn(process.execPath, args, { stdio: "inherit" });
-						startedKeepalive = true;
-						await waitForCdpReady({ port: cdpPort, timeoutMs: ensureCdpTimeoutMs });
-					}
-
-					const resolvedTargetUrl = await waitForOutlookLogin({
-						engine,
-						port: cdpPort,
-						targetUrl,
-						timeoutMs: ensureCdpTimeoutMs,
-					});
-					if (resolvedTargetUrl) {
-						effectiveTargetUrl = resolvedTargetUrl;
-					}
-				}
-
-				let conn = null;
-				try {
-					conn = await connectOverCdp({ engine, port: cdpPort, targetUrl: effectiveTargetUrl });
-					try {
-						const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
-						console.info(`Using tab: ${pageUrl}`);
-
-						if (source === "capture") {
-							events = await captureOwaEvents({ page: conn.page, durationMs: captureMs, urlIncludes });
-						} else {
-							events = await fetchOwaEventsByTemplates({
-								page: conn.page,
-								viewTemplate: viewTemplate,
-								eventTemplate,
-								range,
-								templateVars: cfg?.outlook?.owaTemplateVars,
-							});
-						}
-					} finally {
-						if (conn) {
-							await disconnectBestEffort(conn.browser);
-						}
-					}
-				} finally {
-					if (startedKeepalive && keepaliveProc) {
-						try {
-							keepaliveProc.kill("SIGTERM");
-						} catch {
-							// ignore
-						}
-					}
-				}
-			}
+			const pulled = await outlookClient.listEvents({
+				start: range.start.toISOString(),
+				end: range.end.toISOString(),
+				limit: 1000,
+				folder: cli365Folder ?? undefined,
+			});
+			events = pulled.map(cli365EventToNormalized);
 
 			if (cfg?.outlook) {
 				events = events.filter((ev) =>
@@ -855,11 +643,6 @@ function buildProgram() {
 			if (!markCancelled) return;
 
 			console.info("mark-cancelled enabled: listing mirror events and cancelling missing source keys.");
-			if (source === "capture") {
-				console.info(
-					"Warning: capture mode is partial by nature; only enable this if you're confident the capture covered the full time window."
-				);
-			}
 
 			const { timeMin, timeMax } = toTimeRangeIso(range);
 			const mirrorEvents = await listMirrorEvents({

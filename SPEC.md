@@ -34,18 +34,17 @@ Monitor Outlook calendar events and mirror **real event details** into a dedicat
 
 ## Architecture
 
-Two major components, kept logically separate:
+Three major components, kept logically separate:
 
-### 1) `owa-client` (in-browser OWA API)
+### 1) `owa-tooling` (in-browser OWA diagnostics and extraction)
 
-Purpose: read Outlook event details without relying on a first-party API.
+Purpose: discover and debug Outlook Web endpoints when needed.
 
 - Connect to a running Chromium instance via CDP (port provided by keepalive).
 - Prefer **calling the same internal JSON endpoints OWA uses**:
   - Execute `fetch()` inside the Outlook tab context so OWA cookies/session tokens apply.
   - Parse JSON into a normalized event model.
-- Fallback path if endpoints are too brittle:
-  - Observe network responses and/or scrape DOM/flyouts as needed.
+- These commands are optional for sync runtime; primary `sync` now reads via `cli-365`.
 
 ### 2) `gcal-sync` (Google Calendar writer)
 
@@ -114,8 +113,7 @@ Initial setup should:
 ## Execution
 
 A `sync` run should:
-- Connect to CDP (Playwright or Puppeteer).
-- Capture/read Outlook events for a configurable time window (e.g. today-1…today+N days).
+- Read Outlook events from `cli-365 calendar list` for a configurable time window (e.g. today-1…today+N days).
 - Filter out Outlook items that appear to originate from Google (based on configured rules).
 - Upsert active events into the mirror calendar.
 - Mark missing prior mirrored events as cancelled.
