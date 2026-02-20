@@ -706,18 +706,16 @@ function buildProgram() {
 			const cli365EnsureCdpTimeout = normalizePath(
 				opts.cli365EnsureCdpTimeout ?? cfg?.bidir?.cli365EnsureCdpTimeout
 			);
-			const cli365CdpPort = validateCdpPort(opts.cli365CdpPort ?? cfg?.outlook?.cdpPort ?? 9222);
+			const cli365CdpPortRaw = opts.cli365CdpPort ?? cfg?.bidir?.cli365CdpPort;
+			const cli365CdpPort =
+				cli365CdpPortRaw !== undefined && cli365CdpPortRaw !== null && cli365CdpPortRaw !== ""
+					? validateCdpPort(cli365CdpPortRaw)
+					: undefined;
 			const cli365Folder = normalizePath(opts.cli365Folder);
 
 			const gogBin = normalizePath(opts.gogBin ?? cfg?.bidir?.gogBin) ?? "gog";
 			const gogAccount = normalizePath(opts.gogAccount ?? cfg?.bidir?.gogAccount);
-			const calendarRef = String(
-				opts.googleCalendar ??
-					cfg?.bidir?.calendarId ??
-					cfg?.google?.calendarId ??
-					cfg?.google?.calendarName ??
-					"primary"
-			);
+			const calendarRef = String(opts.googleCalendar ?? cfg?.bidir?.calendarId ?? "primary");
 
 			const outlookClient = createCli365Client({
 				workdir: cli365Workdir ?? undefined,

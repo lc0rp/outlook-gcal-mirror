@@ -161,7 +161,7 @@ node src/cli.js fetch-owa --json
 CLI mode (default; uses `cli-365` on PATH):
 
 ```bash
-node src/cli.js sync \
+scripts/with-gog-keyring.sh node src/cli.js sync \
   --cli365-cdp-port 36429 \
   --cli365-ensure-cdp \
   --google-credentials /path/to/client_secret.json \
@@ -173,6 +173,7 @@ node src/cli.js sync \
 
 Notes:
 
+- `scripts/with-gog-keyring.sh` auto-exports `GOG_KEYRING_PASSWORD` from `/home/user/.config/.env` (fallback: `pass show openclaw/gog_keyring_password`) if not already set.
 - `sync` reads Outlook events via `cli-365` only.
 - `--calendar` accepts a calendar id or name; id match is attempted first. If the calendar doesn’t exist, it will be created.
 - `--lookback-days` (default: 1) includes recently-started events.
@@ -194,7 +195,7 @@ This repo now includes `sync-bidir`, which syncs both ways using CLI tools:
 ### Run
 
 ```bash
-node src/cli.js sync-bidir \
+scripts/with-gog-keyring.sh node src/cli.js sync-bidir \
   --google-calendar primary \
   --cli365-config ~/.config/cli-365/config.yaml \
   --cli365-cdp-port 36429 \
@@ -205,6 +206,7 @@ node src/cli.js sync-bidir \
 
 Useful flags:
 
+- `--google-calendar <idOrName>`: target calendar (default: `primary`; does not inherit one-way `google.calendarName`)
 - `--state-path <path>`: mapping state file (default: `~/.config/outlook-gcal-mirror/bidir-state.json`)
 - `--gog-account <email>`: pass-through to `gog --account`
 - `--dry-run`: compute plan without writes/state updates

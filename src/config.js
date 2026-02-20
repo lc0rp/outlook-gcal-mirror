@@ -49,6 +49,7 @@ export const DEFAULT_BIDIR_STATE_PATH = path.join(DEFAULT_CONFIG_DIR, "bidir-sta
  *   statePath?: string,
  *   cli365Workdir?: string,
  *   cli365ConfigPath?: string,
+ *   cli365CdpPort?: number,
  *   cli365EnsureCdp?: boolean,
  *   cli365EnsureCdpTimeout?: string,
  *   gogAccount?: string,
