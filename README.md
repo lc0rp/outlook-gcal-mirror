@@ -1,11 +1,11 @@
 # outlook-gcal-mirror
 
-Mirror Outlook Web (OWA) calendar event **titles + attendee names** into a dedicated Google Calendar so Granola can see the real meeting details.
+Mirror Outlook calendar event **titles + attendee names** into a dedicated Google Calendar so Granola can see the real meeting details.
 
 Constraints:
 
-- No Outlook/Graph API access: we read events from **outlook.office.com in a real logged-in browser**.
-- We connect to that browser via **CDP** (Chrome DevTools Protocol) using the built-in keepalive command.
+- Sync runtime reads/writes Outlook via `cli-365` subprocess calls.
+- OWA/CDP commands in this repo are optional diagnostics tooling.
 - Google Calendar writes use OAuth and **must not email attendees**.
 
 ## Architecture
@@ -31,9 +31,10 @@ This repo is split conceptually into three layers:
 ### 0) Requirements
 
 - Node **>= 20**
-- A logged-in Outlook Web (OWA) account
+- `cli-365` installed and authenticated for Outlook calendar access
 - A Google OAuth client (type: **Installed app**)
-- Chrome/Chromium available for Playwright/Puppeteer
+- `gog` installed/authenticated if you use `sync-bidir`
+- Chrome/Chromium only if you run optional OWA tooling commands
 
 ### 1) Install dependencies
 
@@ -64,7 +65,7 @@ Default config path: `~/.config/outlook-gcal-mirror/config.json`
 
 Pass `--config /path/to/config.json` if you want a different location.
 
-### 3) Start Outlook in a CDP-enabled browser
+### 3) Optional: Start Outlook in a CDP-enabled browser
 
 ```bash
 DISPLAY=:1 XAUTHORITY=$HOME/.Xauthority node src/cli.js keepalive --target-url https://outlook.office.com/calendar/view/week -p 9222 --only-if-idle
@@ -74,7 +75,9 @@ Log in and make sure the calendar week view is loaded.
 
 Tip: pass `--user-data-dir ~/.config/outlook-gcal-mirror/chrome` to keep a stable Chrome profile.
 
-### 4) Discover OWA internal requests (one-time)
+You only need this for OWA tooling (`discover-owa`, `capture-owa`, `fetch-owa`).
+
+### 4) Optional: Discover OWA internal requests (one-time)
 
 ```bash
 node src/cli.js discover-owa --cdp-port 9222 --engine playwright --duration-ms 120000 --min-score 1 --no-url-filter
@@ -142,7 +145,7 @@ Provide credentials JSON via `--google-credentials /path/to/client_secret.json`.
 The first sync will open the OAuth flow and store a token at:
 `~/.config/outlook-gcal-mirror/google-token.json` (override with `--google-token`).
 
-### 6) Verify extraction
+### 6) Optional: Verify OWA extraction
 
 Passive capture mode:
 
@@ -173,7 +176,7 @@ scripts/with-gog-keyring.sh node src/cli.js sync \
 
 Notes:
 
-- `scripts/with-gog-keyring.sh` auto-exports `GOG_KEYRING_PASSWORD` from `/home/user/.config/.env` (fallback: `pass show openclaw/gog_keyring_password`) if not already set.
+- `scripts/with-gog-keyring.sh` auto-exports `GOG_KEYRING_PASSWORD` from `/home/user/.config/.env` (fallback: `pass show openclaw/gog_keyring_password`) if not already set; mainly needed for `sync-bidir`/`gog`.
 - `sync` reads Outlook events via `cli-365` only.
 - `--calendar` accepts a calendar id or name; id match is attempted first. If the calendar doesn’t exist, it will be created.
 - `--lookback-days` (default: 1) includes recently-started events.
@@ -288,7 +291,7 @@ It **always adds `owner@example.com` as a single attendee** on mirrored events, 
 
 Target cadence is every 30 minutes. On macOS, use a LaunchAgent `StartInterval=1800`.
 
-There’s also a helper script that runs keepalive + discovery + verify + sync in one shot:
+There’s also a helper script that runs a cli-365-first `sync` in one shot:
 
 ```bash
 pnpm run mirror:all

@@ -13,12 +13,11 @@ Monitor Outlook calendar events and mirror **real event details** into a dedicat
 
 ## Key Constraints
 
-- **No Outlook API / Graph access.**
-- Outlook must be accessed via **Outlook Web (OWA)** in a real logged-in browser session.
-- The tool must launch a CDP-enabled browser (via the built-in keepalive command) to keep OWA open and controllable.
+- Outlook IO in this repo is via `cli-365` subprocess calls (no direct Outlook SDK/API integration here).
+- OWA/CDP commands are optional tooling for diagnostics and endpoint investigation.
 - Google Calendar writes use OAuth.
 - **Do not email any attendee** (no invitations, no updates).
-- Must support both **Playwright** and **Puppeteer** for CDP connection.
+- OWA tooling supports both **Playwright** and **Puppeteer** when used.
 - Runs on User’s **macOS desktop**.
 
 ## Decisions (Confirmed)
@@ -105,7 +104,7 @@ When an Outlook event is no longer present in the scan window:
 ## Setup & Configuration
 
 Initial setup should:
-- Connect to the CDP browser session and confirm OWA week view is open.
+- Configure `cli-365` runtime inputs (config path, optional CDP params, optional folder filter).
 - Let the user select/include/skip Outlook calendars (by name) and optionally owner emails.
 - Perform Google OAuth and select/create the destination calendar.
 - Save config under `~/.config/outlook-gcal-mirror/config.json` (paths overridable).
@@ -133,7 +132,6 @@ For `sync-bidir` (current MVP):
 
 ## Open Questions / TBD
 
-- Exact OWA internal endpoint(s) and required headers/tokens (to be determined via discovery on User’s Mac).
-- Best strategy to enumerate events over a time range (OWA endpoint vs week-view paging).
+- Whether to retain or deprecate OWA tooling commands once cli-365 coverage is sufficient.
 - How to represent recurring events (instance ids vs series ids) for stable mapping.
 - Deletion semantics for bidirectional sync (currently recreated, not propagated).
