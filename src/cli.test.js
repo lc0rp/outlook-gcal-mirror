@@ -1,61 +1,72 @@
 import { describe, expect, it } from "vitest";
 import { promises as fs } from "node:fs";
+import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
-import { buildProgram } from "./cli.js";
+const execFileAsync = promisify(execFile);
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-function getCommand(program, name) {
-	return program.commands.find((command) => command.name() === name);
+async function runCli(args) {
+	return await execFileAsync(process.execPath, ["src/cli.js", ...args], {
+		cwd: repoRoot,
+		env: { ...process.env, FORCE_COLOR: "0" },
+	});
 }
 
 describe("cli", () => {
-	it("removes legacy direct-outlook commands", () => {
-		const program = buildProgram();
-		const commandNames = program.commands.map((command) => command.name());
-
-		expect(commandNames).not.toContain("keepalive");
-		expect(commandNames).not.toContain("discover-owa");
-		expect(commandNames).not.toContain("discover-owa-log");
-		expect(commandNames).not.toContain("capture-owa");
-		expect(commandNames).not.toContain("fetch-owa");
-	});
-
-	it("setup stays cli-365 centric", async () => {
+	it("setup writes cli-365-first config only", async () => {
 		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ogm-cli-"));
 		const configPath = path.join(dir, "config.json");
-		const program = buildProgram();
-		const setup = getCommand(program, "setup");
 
-		expect(setup?.options.map((option) => option.long)).not.toContain("--cdp-port");
-		expect(setup?.options.map((option) => option.long)).not.toContain("--engine");
-		expect(setup?.options.map((option) => option.long)).not.toContain("--target-url");
+		await runCli([
+			"--config",
+			configPath,
+			"setup",
+			"--google-credentials",
+			"/tmp/creds.json",
+			"--calendar",
+			"Mirror",
+		]);
 
-		await program.parseAsync(
-			[
-				"--config",
-				configPath,
-				"setup",
-				"--google-credentials",
-				"/tmp/credentials.json",
-				"--calendar",
-				"Outlook Mirror",
-			],
-			{ from: "user" }
-		);
+		const cfg = JSON.parse(await fs.readFile(configPath, "utf8"));
 
-		const saved = JSON.parse(await fs.readFile(configPath, "utf8"));
-		expect(saved).toEqual({
-			outlook: {},
+		expect(cfg).toEqual({
 			google: {
-				credentialsPath: "/tmp/credentials.json",
+				credentialsPath: "/tmp/creds.json",
 				tokenPath: expect.stringContaining("google-token.json"),
-				calendarName: "Outlook Mirror",
+				calendarName: "Mirror",
 			},
 			sync: {
 				windowDays: 14,
 				markCancelled: false,
 			},
 		});
+	});
+
+	it("help omits retired OWA commands", async () => {
+		const { stdout } = await runCli(["--help"]);
+
+		expect(stdout).not.toContain("keepalive");
+		expect(stdout).not.toContain("discover-owa");
+		expect(stdout).not.toContain("discover-owa-log");
+		expect(stdout).not.toContain("capture-owa");
+		expect(stdout).not.toContain("fetch-owa");
+	});
+
+	it("README quickstart stays cli-365-first", async () => {
+		const readme = await fs.readFile(path.join(repoRoot, "README.md"), "utf8");
+		const docs = readme.split("## TODO:")[0];
+
+		expect(docs).not.toContain("keepalive");
+		expect(docs).not.toContain("discover-owa");
+		expect(docs).not.toContain("discover-owa-log");
+		expect(docs).not.toContain("capture-owa");
+		expect(docs).not.toContain("fetch-owa");
+		expect(docs).not.toMatch(/(^|[\s`])--engine(?=$|[\s`])/m);
+		expect(docs).not.toMatch(/(^|[\s`])--target-url(?=$|[\s`])/m);
+		expect(docs).not.toMatch(/(^|[\s`])--cdp-port(?=$|[\s`])/m);
 	});
 });

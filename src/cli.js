@@ -128,7 +128,6 @@ export function buildProgram() {
 
 			/** @type {import('./config.js').MirrorConfig} */
 			const cfg = {
-				outlook: {},
 				google: {
 					credentialsPath: credentialsPath ?? "",
 					tokenPath,
