@@ -14,10 +14,9 @@ Monitor Outlook calendar events and mirror **real event details** into a dedicat
 ## Key Constraints
 
 - Outlook IO in this repo is via `cli-365` subprocess calls (no direct Outlook SDK/API integration here).
-- OWA/CDP commands are optional tooling for diagnostics and endpoint investigation.
 - Google Calendar writes use OAuth.
+- Google CLI reads/writes for bidirectional sync go through `gog`.
 - **Do not email any attendee** (no invitations, no updates).
-- OWA tooling supports both **Playwright** and **Puppeteer** when used.
 - Runs on User’s **macOS desktop**.
 
 ## Decisions (Confirmed)
@@ -35,23 +34,21 @@ Monitor Outlook calendar events and mirror **real event details** into a dedicat
 
 Three major components, kept logically separate:
 
-### 1) `owa-tooling` (in-browser OWA diagnostics and extraction)
+### 1) `cli-providers` (subprocess adapters)
 
-Purpose: discover and debug Outlook Web endpoints when needed.
+Purpose: isolate external calendar CLIs from sync logic.
 
-- Connect to a running Chromium instance via CDP (port provided by keepalive).
-- Prefer **calling the same internal JSON endpoints OWA uses**:
-  - Execute `fetch()` inside the Outlook tab context so OWA cookies/session tokens apply.
-  - Parse JSON into a normalized event model.
-- These commands are optional for sync runtime; primary `sync` now reads via `cli-365`.
+- Outlook IO via `cli-365`.
+- Google CLI IO via `gog`.
+- Normalize subprocess responses into stable sync inputs.
 
-### 2) `gcal-sync` (Google Calendar writer)
+### 2) `gcal-sync` (one-way mirror writer)
 
 Purpose: upsert the mirror calendar without sending any notifications.
 
 - Authenticate via Google OAuth (Desktop/Installed app).
 - Ensure the “Outlook Mirror” calendar exists (or select an existing one).
-- Upsert events into that calendar.
+- Read Outlook events from `cli-365`, filter them, and upsert them into that calendar.
 
 ### 3) `bidir-sync` (CLI-to-CLI reconciler, MVP)
 
@@ -104,10 +101,11 @@ When an Outlook event is no longer present in the scan window:
 ## Setup & Configuration
 
 Initial setup should:
-- Configure `cli-365` runtime inputs (config path, optional CDP params, optional folder filter).
+- Configure Google OAuth and mirror calendar defaults.
 - Let the user select/include/skip Outlook calendars (by name) and optionally owner emails.
-- Perform Google OAuth and select/create the destination calendar.
 - Save config under `~/.config/outlook-gcal-mirror/config.json` (paths overridable).
+
+Per-run flags may still pass `cli-365` runtime inputs such as config path, optional CDP bootstrap params, and optional folder filter.
 
 ## Execution
 
@@ -132,6 +130,5 @@ For `sync-bidir` (current MVP):
 
 ## Open Questions / TBD
 
-- Whether to retain or deprecate OWA tooling commands once cli-365 coverage is sufficient.
 - How to represent recurring events (instance ids vs series ids) for stable mapping.
 - Deletion semantics for bidirectional sync (currently recreated, not propagated).

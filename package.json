@@ -20,9 +20,7 @@
     "commitlint": "commitlint"
   },
   "dependencies": {
-    "commander": "^14.0.2",
-    "playwright": "^1.57.0",
-    "puppeteer": "^24.35.0"
+    "commander": "^14.0.2"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.4.1",

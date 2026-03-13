@@ -69,4 +69,17 @@ describe("cli", () => {
 		expect(docs).not.toMatch(/(^|[\s`])--target-url(?=$|[\s`])/m);
 		expect(docs).not.toMatch(/(^|[\s`])--cdp-port(?=$|[\s`])/m);
 	});
+
+	it("spec and package stay free of retired OWA runtime paths", async () => {
+		const spec = await fs.readFile(path.join(repoRoot, "SPEC.md"), "utf8");
+		const pkg = JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8"));
+
+		expect(spec).not.toContain("OWA/CDP");
+		expect(spec).not.toContain("owa-tooling");
+		expect(spec).not.toContain("Playwright");
+		expect(spec).not.toContain("Puppeteer");
+
+		expect(pkg.dependencies).not.toHaveProperty("playwright");
+		expect(pkg.dependencies).not.toHaveProperty("puppeteer");
+	});
 });

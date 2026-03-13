@@ -59,10 +59,6 @@ function formatEventSummary(ev) {
 	return `${start} → ${end} | ${subject}`;
 }
 
-/**
- * @param {unknown} value
- * @returns {"playwright" | "puppeteer"}
- */
 const MIRROR_MARKER = "Mirrored from Outlook (read-only)";
 
 function looksLikeMirroredEvent(event, { requireMarker = true } = {}) {

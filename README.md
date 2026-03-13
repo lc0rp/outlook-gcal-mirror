@@ -205,5 +205,5 @@ Override behavior via env vars (see `scripts/mirror-all.js` for the full list).
 ## TODO: Use red/green TDD with complete implementaton (no surface stubs). Track progress, hand-off when necessary, and mark tasks as done below as you complete them. Conventional commits + push after each task
 1. - [x] Scrub any local code/path that doesn't rely on `cli-365`. cli-365 is now ready to replace all direct Outlook interactions.
 2. - [x] Update README to remove local paths that do not rely on `cli-365`, e.g. --cdp-port, --engine, --targetUrl
-3. - [ ] Review code for dead paths that are no longer relevant
+3. - [x] Review code for dead paths that are no longer relevant
 4. - [ ] Use repo-doc and user-doc skills to update dev and user documentation
