@@ -172,8 +172,6 @@ scripts/with-gog-keyring.sh node src/cli.js sync \
   --window-days 14
 ```
 
-
-
 Notes:
 
 - `scripts/with-gog-keyring.sh` auto-exports `GOG_KEYRING_PASSWORD` from `/home/user/.config/.env` (fallback: `pass show openclaw/gog_keyring_password`) if not already set; mainly needed for `sync-bidir`/`gog`.
@@ -307,3 +305,9 @@ Override behavior via env vars (see `scripts/mirror-all.js` for the full list).
 - CI on main creates tag + GitHub Release and writes CHANGELOG.md.
 - Local dry-run: `pnpm run release -- --dry-run --no-ci`.
 - No npm publish (private package).
+
+## TODO: Track progress, hand-off when necessary, and mark tasks as done below as you complete them. Conventional commits + push after each task
+1. - [ ] Scrub any local code/path that doesn't rely on `cli-365`. cli-365 is now ready to replace all direct Outlook interactions.
+2. - [ ] Update README to remove local paths that do not rely on `cli-365`, e.g. --cdp-port, --engine, --targetUrl
+3. - [ ] Review code for dead paths that are no longer relevant
+4. - [ ] Use user-doc skill to update documentation
