@@ -21,6 +21,12 @@ This repo is split conceptually into two layers:
    - One-way `sync`: Outlook (`cli-365`) -> Google Calendar mirror.
    - Bidirectional `sync-bidir`: `cli-365` <-> `gog` reconciliation + link state.
 
+## Docs
+
+- Route hub: `docs/index.md`
+- Users: `docs/users/index.md`
+- Builders: `docs/builders/index.md`
+
 ## Quickstart (recommended)
 
 ### 0) Requirements
@@ -206,4 +212,4 @@ Override behavior via env vars (see `scripts/mirror-all.js` for the full list).
 1. - [x] Scrub any local code/path that doesn't rely on `cli-365`. cli-365 is now ready to replace all direct Outlook interactions.
 2. - [x] Update README to remove local paths that do not rely on `cli-365`, e.g. --cdp-port, --engine, --targetUrl
 3. - [x] Review code for dead paths that are no longer relevant
-4. - [ ] Use repo-doc and user-doc skills to update dev and user documentation
+4. - [x] Use repo-doc and user-doc skills to update dev and user documentation

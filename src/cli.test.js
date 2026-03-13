@@ -82,4 +82,31 @@ describe("cli", () => {
 		expect(pkg.dependencies).not.toHaveProperty("playwright");
 		expect(pkg.dependencies).not.toHaveProperty("puppeteer");
 	});
+
+	it("docs route users and builders through current cli-365 workflows", async () => {
+		const readme = await fs.readFile(path.join(repoRoot, "README.md"), "utf8");
+		expect(readme).toContain("docs/index.md");
+		expect(readme).toContain("4. - [x] Use repo-doc and user-doc skills to update dev and user documentation");
+
+		const docsHub = await fs.readFile(path.join(repoRoot, "docs", "index.md"), "utf8");
+		expect(docsHub).toContain("read_when:");
+		expect(docsHub).toContain("docs/users/index.md");
+		expect(docsHub).toContain("docs/builders/index.md");
+
+		const userDocs = await fs.readFile(path.join(repoRoot, "docs", "users", "index.md"), "utf8");
+		expect(userDocs).toContain("cli-365");
+		expect(userDocs).toContain("sync");
+		expect(userDocs).toContain("sync-bidir");
+		expect(userDocs).toContain("clear");
+		expect(userDocs).toContain("googleapis");
+		expect(userDocs).not.toContain("discover-owa");
+
+		const builderDocs = await fs.readFile(path.join(repoRoot, "docs", "builders", "index.md"), "utf8");
+		expect(builderDocs).toContain("src/cli.js");
+		expect(builderDocs).toContain("src/providers/cli365.js");
+		expect(builderDocs).toContain("src/sync/bidir.js");
+		expect(builderDocs).toContain("pnpm lint");
+		expect(builderDocs).toContain("pnpm test");
+		expect(builderDocs).not.toContain("discover-owa");
+	});
 });
