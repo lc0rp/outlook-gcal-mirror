@@ -1,5 +1,5 @@
 /**
- * @param {import("../owa/extract.js").NormalizedEvent} ev
+ * @param {import("./normalized-event.js").NormalizedEvent} ev
  */
 export function buildGoogleDescription(ev) {
 	const lines = [];

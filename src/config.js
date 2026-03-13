@@ -7,34 +7,16 @@ import { UserError } from "./errors.js";
 export const DEFAULT_CONFIG_DIR = path.join(os.homedir(), ".config", "outlook-gcal-mirror");
 export const DEFAULT_CONFIG_PATH = path.join(DEFAULT_CONFIG_DIR, "config.json");
 export const DEFAULT_TOKEN_PATH = path.join(DEFAULT_CONFIG_DIR, "google-token.json");
-export const DEFAULT_TEMPLATES_PATH = path.join(DEFAULT_CONFIG_DIR, "templates.json");
 export const DEFAULT_BIDIR_STATE_PATH = path.join(DEFAULT_CONFIG_DIR, "bidir-state.json");
 
 /**
  * @typedef {object} MirrorConfig
  * @property {{
- *   cdpPort: number,
- *   engine: "playwright" | "puppeteer",
- *   targetUrl: string,
  *   includeCalendars?: string[],
  *   skipCalendars?: string[],
  *   includeOwnerEmails?: string[],
  *   skipOwnerEmails?: string[],
- *   owaTemplatesPath?: string,
- *   owaRequestTemplate?: {
- *     url: string,
- *     method: string,
- *     headers?: Record<string,string>,
- *     body?: any,
- *   },
- *   owaEventRequestTemplate?: {
- *     url: string,
- *     method: string,
- *     headers?: Record<string,string>,
- *     body?: any,
- *   },
- *   owaTemplateVars?: Record<string,string>,
- * }} outlook
+ * }} [outlook]
  * @property {{
  *   credentialsPath: string,
  *   tokenPath: string,

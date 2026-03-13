@@ -1,5 +1,5 @@
 /**
- * @param {import("../owa/extract.js").NormalizedEvent} ev
+ * @param {import("./normalized-event.js").NormalizedEvent} ev
  * @param {{ includeCalendars?: string[], skipCalendars?: string[], includeOwnerEmails?: string[], skipOwnerEmails?: string[] }} rules
  */
 export function shouldSyncEvent(ev, rules) {

@@ -2,29 +2,18 @@
 
 import { Command } from "commander";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
-import { connectOverCdp } from "./cdp/index.js";
 import { UserError } from "./errors.js";
 import {
 	DEFAULT_CONFIG_PATH,
 	DEFAULT_BIDIR_STATE_PATH,
-	DEFAULT_TEMPLATES_PATH,
 	DEFAULT_TOKEN_PATH,
 	loadConfig,
 	saveConfig,
 } from "./config.js";
-import { validateAbsoluteUrl, validateCdpPort, errorMessage } from "./utils.js";
-import { normalizePort } from "./keepalive/engines.js";
-import { resolveUserDataDir, runKeepalive } from "./keepalive/keepalive.js";
+import { validateCdpPort, errorMessage } from "./utils.js";
 import { getGoogleCalendarClient } from "./google/client.js";
-import {
-	discoverOwaCandidates,
-	discoverOwaCandidatesFromLog,
-	suggestTemplate,
-} from "./owa/discovery.js";
-import { captureOwaEvents } from "./owa/capture.js";
-import { fetchOwaEventsByTemplate, fetchOwaEventsByTemplates } from "./owa/events.js";
-import { loadTemplateFromFile, saveTemplatesFile } from "./owa/templates.js";
 import { shouldSyncEvent } from "./sync/filters.js";
 import { cli365EventToNormalized } from "./sync/outlook.js";
 import {
@@ -41,12 +30,6 @@ import { createGogClient } from "./providers/gog.js";
 import { loadBidirState, saveBidirState } from "./sync/bidir-state.js";
 import { runBidirectionalSync } from "./sync/bidir.js";
 
-const DEFAULT_TARGET_URLS = [
-	"https://outlook.office.com/calendar/view/week",
-	"https://outlook.cloud.microsoft/calendar/view/week",
-];
-const DEFAULT_TARGET_URL = DEFAULT_TARGET_URLS[0];
-
 /**
  * @param {unknown} value
  * @param {string} label
@@ -56,18 +39,6 @@ function parsePositiveInt(value, label) {
 	const n = Number(value);
 	if (!Number.isInteger(n) || n <= 0) throw new UserError(`${label} must be a positive integer`);
 	return n;
-}
-
-function parsePositiveNumber(value, label) {
-	if (value === undefined || value === null || value === "") return null;
-	const n = Number(value);
-	if (!Number.isFinite(n) || n <= 0) throw new UserError(`${label} must be a positive number`);
-	return n;
-}
-
-function collectList(value, previous) {
-	if (!value) return previous ?? [];
-	return [...(previous ?? []), value];
 }
 
 function formatEventTimestamp(value) {
@@ -92,12 +63,6 @@ function formatEventSummary(ev) {
  * @param {unknown} value
  * @returns {"playwright" | "puppeteer"}
  */
-function parseEngine(value) {
-	const v = String(value ?? "").trim().toLowerCase();
-	if (v === "playwright" || v === "puppeteer") return /** @type {any} */ (v);
-	throw new UserError("--engine must be 'playwright' or 'puppeteer'");
-}
-
 const MIRROR_MARKER = "Mirrored from Outlook (read-only)";
 
 function looksLikeMirroredEvent(event, { requireMarker = true } = {}) {
@@ -114,63 +79,11 @@ function looksLikeMirroredEvent(event, { requireMarker = true } = {}) {
 }
 
 /**
- * @param {any} browser
- */
-async function disconnectBestEffort(browser) {
-	try {
-		if (browser && typeof browser.disconnect === "function") {
-			browser.disconnect();
-			return;
-		}
-		if (browser && typeof browser.close === "function") {
-			await browser.close();
-		}
-	} catch {
-		// ignore
-	}
-}
-
-/**
  * @param {string | undefined} maybe
  */
 function normalizePath(maybe) {
 	if (!maybe) return null;
 	return String(maybe);
-}
-
-/**
- * @param {import('./config.js').MirrorConfig | null | undefined} cfg
- */
-function templateMatchesAction(template, action) {
-	if (!template || typeof template !== "object") return false;
-	const url = String(template.url ?? "");
-	return url.includes(`action=${action}`);
-}
-
-async function resolveOwaTemplates(cfg) {
-	const templatesPath = cfg?.outlook?.owaTemplatesPath ?? DEFAULT_TEMPLATES_PATH;
-
-	let viewTemplate = cfg?.outlook?.owaRequestTemplate ?? null;
-	let eventTemplate = cfg?.outlook?.owaEventRequestTemplate ?? null;
-
-	if (!viewTemplate) {
-		viewTemplate = await loadTemplateFromFile(
-			templatesPath,
-			(template) => templateMatchesAction(template, "GetCalendarView")
-		);
-		if (!viewTemplate) {
-			viewTemplate = await loadTemplateFromFile(templatesPath);
-		}
-	}
-
-	if (!eventTemplate) {
-		eventTemplate = await loadTemplateFromFile(
-			templatesPath,
-			(template) => templateMatchesAction(template, "GetCalendarEvent")
-		);
-	}
-
-	return { viewTemplate, eventTemplate };
 }
 
 /**
@@ -188,75 +101,17 @@ function buildMirrorWindowRange({ lookbackDays, windowDays }) {
 	return { start, end };
 }
 
-function buildProgram() {
+export function buildProgram() {
 	const program = new Command();
 	program
 		.name("outlook-gcal-mirror")
-		.description("Mirror Outlook Web calendar details into a dedicated Google Calendar")
+		.description("Mirror Outlook calendar details into a dedicated Google Calendar")
 		.option("--config <path>", "Config path", DEFAULT_CONFIG_PATH)
 		.showHelpAfterError(true);
 
 	program
-		.command("keepalive")
-		.description("Launch a browser, load a URL, and periodically refresh it to keep it alive")
-		.option("--target-url <url>", "OWA calendar URL", DEFAULT_TARGET_URL)
-		.option("-i, --interval <seconds>", "Refresh interval in seconds", "60")
-		.option("--cache-bust", "Add cache-busting query param on each refresh (default: true)")
-		.option("--no-cache-bust", "Disable cache-busting query param")
-		.option("--always-reset", "Always navigate to the original URL instead of refreshing current page")
-		.option("--engine <engine>", "playwright|puppeteer", "playwright")
-		.option("--headless", "Run browser without visible window")
-		.option(
-			"--user-data-dir <dir>",
-			"Persist browser profile/cookies in this directory (defaults to ~/.config/outlook-gcal-mirror/chrome, falling back to ~/.browser-keepalive/chrome)"
-		)
-		.option("-p, --cdp-port <port>", "Enable Chrome DevTools Protocol on this port")
-		.option("--only-if-idle", "Only refresh when browser has been idle for the full interval")
-		.option("--record-network <path>", "Write NDJSON network log to this path")
-		.option(
-			"--record-include <substr>",
-			"Only record responses whose URL includes this substring (repeatable)",
-			collectList,
-			[]
-		)
-		.option("--record-max-bytes <bytes>", "Max response body bytes to store per entry", "1000000")
-		.option("--no-record-body", "Do not include response bodies in network log")
-		.action(async (opts) => {
-			const targetUrl = validateAbsoluteUrl(opts.targetUrl ?? DEFAULT_TARGET_URL);
-			const intervalSeconds = parsePositiveNumber(opts.interval, "--interval") ?? 60;
-			const engine = parseEngine(opts.engine);
-			const cdpPort = normalizePort(opts.cdpPort);
-			const userDataDir = resolveUserDataDir(opts.userDataDir);
-			const recordMaxBytes = parsePositiveInt(opts.recordMaxBytes, "--record-max-bytes") ?? 1000000;
-
-			const recordNetworkPath = opts.recordNetwork ? String(opts.recordNetwork).trim() : null;
-			const recordIncludes = Array.isArray(opts.recordInclude)
-				? opts.recordInclude.map((value) => String(value)).filter(Boolean)
-				: [];
-
-			await runKeepalive({
-				url: targetUrl,
-				intervalSeconds,
-				cacheBust: opts.cacheBust !== false,
-				alwaysReset: !!opts.alwaysReset,
-				engine,
-				headless: !!opts.headless,
-				userDataDir,
-				cdpPort,
-				onlyIfIdle: !!opts.onlyIfIdle,
-				recordNetworkPath,
-				recordIncludes,
-				recordMaxBytes,
-				recordBody: opts.recordBody !== false,
-			});
-		});
-
-	program
 		.command("setup")
 		.description("Write a config file (non-interactive)")
-		.option("-p, --cdp-port <port>", "CDP port (where keepalive exposes CDP)")
-		.option("--engine <engine>", "playwright|puppeteer", "playwright")
-		.option("--target-url <url>", "OWA calendar URL", DEFAULT_TARGET_URL)
 		.option("--google-credentials <path>", "Google OAuth credentials JSON (Installed app)")
 		.option("--google-token <path>", "Google token JSON path", DEFAULT_TOKEN_PATH)
 		.option("--calendar <idOrName>", "Destination Google calendar (id or name)")
@@ -266,10 +121,6 @@ function buildProgram() {
 		.action(async (opts) => {
 			const cfgPath = program.opts().config;
 
-			const cdpPort = validateCdpPort(opts.cdpPort);
-			const engine = parseEngine(opts.engine);
-			const targetUrl = validateAbsoluteUrl(opts.targetUrl);
-
 			const credentialsPath = normalizePath(opts.googleCredentials);
 			const tokenPath = normalizePath(opts.googleToken) ?? DEFAULT_TOKEN_PATH;
 			const calendarRef = String(opts.calendar ?? opts.calendarName ?? "Outlook Mirror");
@@ -277,11 +128,7 @@ function buildProgram() {
 
 			/** @type {import('./config.js').MirrorConfig} */
 			const cfg = {
-				outlook: {
-					cdpPort,
-					engine,
-					targetUrl,
-				},
+				outlook: {},
 				google: {
 					credentialsPath: credentialsPath ?? "",
 					tokenPath,
@@ -297,223 +144,6 @@ function buildProgram() {
 			console.info(`Wrote config: ${cfgPath}`);
 			if (!credentialsPath) {
 				console.info("Note: set google.credentialsPath before running sync (or pass --google-credentials).");
-			}
-		});
-
-	program
-		.command("discover-owa")
-		.description("Observe OWA network responses and print candidate JSON endpoints")
-		.option("-p, --cdp-port <port>", "CDP port", "9222")
-		.option("--engine <engine>", "playwright|puppeteer", "playwright")
-		.option("--target-url <url>", "If no suitable tab exists, open this URL", DEFAULT_TARGET_URL)
-		.option("--duration-ms <ms>", "How long to observe network", "60000")
-		.option("--min-score <n>", "Minimum JSON key score", "3")
-		.option(
-			"--url-includes <substr>",
-			"Only consider responses whose URL contains this substring",
-			"outlook.office.com"
-		)
-		.option("--no-url-filter", "Do not filter responses by URL")
-		.action(async (opts) => {
-			const cdpPort = validateCdpPort(opts.cdpPort);
-			const engine = parseEngine(opts.engine);
-			const targetUrl = validateAbsoluteUrl(opts.targetUrl);
-			const durationMs = parsePositiveInt(opts.durationMs, "--duration-ms") ?? 60000;
-			const minScore = parsePositiveInt(opts.minScore, "--min-score") ?? 3;
-			const urlIncludes = opts.urlFilter === false ? null : String(opts.urlIncludes ?? "outlook.office.com");
-
-			console.info("Connects via CDP. While this runs: click calendar items / navigate weeks to generate JSON responses.");
-
-			const conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
-			try {
-				const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
-				console.info(`Using tab: ${pageUrl}`);
-
-				const candidates = await discoverOwaCandidates({
-					page: conn.page,
-					durationMs,
-					minScore,
-					urlIncludes,
-				});
-
-				if (!candidates.length) {
-					console.info("No candidates found. Try increasing --duration-ms and interact with the calendar UI.");
-					return;
-				}
-
-				console.info(`Found ${candidates.length} candidate endpoint(s):`);
-				for (const c of candidates) {
-					console.info(`\n- ${c.method} ${c.url}`);
-					console.info(`  interestingKeys: ${c.interestingKeys.join(", ")}`);
-					console.info("  suggestedTemplate:");
-					console.info(JSON.stringify(suggestTemplate(c), null, 2));
-				}
-			} finally {
-				await disconnectBestEffort(conn.browser);
-			}
-		});
-
-	program
-		.command("discover-owa-log")
-		.description("Scan an NDJSON network log and print candidate JSON endpoints")
-		.option("--log <path>", "Path to NDJSON network log")
-		.option("--min-score <n>", "Minimum JSON key score", "3")
-		.option(
-			"--url-includes <substr>",
-			"Only consider responses whose URL contains this substring",
-			"outlook.office.com"
-		)
-		.option("--no-url-filter", "Do not filter responses by URL")
-		.option("--save-templates", "Save candidate templates to disk")
-		.option(
-			"--templates-path <path>",
-			"Path to templates JSON (default: ~/.config/outlook-gcal-mirror/templates.json)"
-		)
-		.action(async (opts) => {
-			const logPath = normalizePath(opts.log);
-			if (!logPath) {
-				throw new UserError("--log is required");
-			}
-			const minScore = parsePositiveInt(opts.minScore, "--min-score") ?? 3;
-			const urlIncludes = opts.urlFilter === false ? null : String(opts.urlIncludes ?? "outlook.office.com");
-
-			const candidates = await discoverOwaCandidatesFromLog({
-				filePath: logPath,
-				minScore,
-				urlIncludes,
-			});
-
-			if (!candidates.length) {
-				console.info("No candidates found. Capture more traffic or relax --min-score/--url-includes.");
-				return;
-			}
-
-			const enriched = candidates.map((c) => ({
-				...c,
-				suggestedTemplate: suggestTemplate(c),
-			}));
-
-			if (opts.saveTemplates) {
-				const templatesPath = normalizePath(opts.templatesPath) ?? DEFAULT_TEMPLATES_PATH;
-				await saveTemplatesFile(templatesPath, {
-					generatedAt: new Date().toISOString(),
-					candidates: enriched,
-				});
-				console.info(`Saved templates: ${templatesPath}`);
-			}
-
-			console.info(`Found ${candidates.length} candidate endpoint(s):`);
-			for (const c of enriched) {
-				console.info(`\n- ${c.method} ${c.url}`);
-				console.info(`  interestingKeys: ${c.interestingKeys.join(", ")}`);
-				console.info("  suggestedTemplate:");
-				console.info(JSON.stringify(c.suggestedTemplate, null, 2));
-			}
-		});
-
-	program
-		.command("capture-owa")
-		.description("Capture OWA JSON responses for a short window and extract events")
-		.option("-p, --cdp-port <port>", "CDP port", "9222")
-		.option("--engine <engine>", "playwright|puppeteer", "playwright")
-		.option("--target-url <url>", "If no suitable tab exists, open this URL", DEFAULT_TARGET_URL)
-		.option("--duration-ms <ms>", "Capture duration", "15000")
-		.option(
-			"--url-includes <substr>",
-			"Only consider responses whose URL contains this substring",
-			"outlook.office.com"
-		)
-		.option("--no-url-filter", "Do not filter responses by URL")
-		.option("--json", "Print events as JSON")
-		.action(async (opts) => {
-			const cdpPort = validateCdpPort(opts.cdpPort);
-			const engine = parseEngine(opts.engine);
-			const targetUrl = validateAbsoluteUrl(opts.targetUrl);
-			const durationMs = parsePositiveInt(opts.durationMs, "--duration-ms") ?? 15000;
-			const urlIncludes = opts.urlFilter === false ? null : String(opts.urlIncludes ?? "outlook.office.com");
-
-			console.info("Capturing JSON responses. Tip: open week view and click events while capturing.");
-
-			const conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
-			try {
-				const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
-				console.info(`Using tab: ${pageUrl}`);
-
-				const events = await captureOwaEvents({ page: conn.page, durationMs, urlIncludes });
-				if (opts.json) {
-					console.info(JSON.stringify(events, null, 2));
-					return;
-				}
-
-				console.info(`Extracted ${events.length} event(s).`);
-				for (const ev of events.slice(0, 15)) {
-					console.info(`- ${ev.subject} (${ev.start.dateTime ?? ev.start.date} → ${ev.end.dateTime ?? ev.end.date})`);
-				}
-				if (events.length > 15) console.info(`…and ${events.length - 15} more`);
-			} finally {
-				await disconnectBestEffort(conn.browser);
-			}
-		});
-
-	program
-		.command("fetch-owa")
-		.description("Fetch OWA JSON via a configured request template and extract events")
-		.option("-p, --cdp-port <port>", "CDP port (overrides config)")
-		.option("--engine <engine>", "playwright|puppeteer (overrides config)")
-		.option("--target-url <url>", "OWA calendar URL (overrides config)")
-		.option("--window-days <n>", "Days ahead to fetch (overrides config)")
-		.option("--lookback-days <n>", "Days back to include in the fetch window", "1")
-		.option("--json", "Print extracted events as JSON")
-		.action(async (opts) => {
-			const cfgPath = program.opts().config;
-			const cfg = await loadConfig(cfgPath);
-
-			const cdpPort = validateCdpPort(opts.cdpPort ?? cfg?.outlook?.cdpPort ?? 9222);
-			const engine = parseEngine(opts.engine ?? cfg?.outlook?.engine ?? "playwright");
-			const targetUrl = validateAbsoluteUrl(opts.targetUrl ?? cfg?.outlook?.targetUrl ?? DEFAULT_TARGET_URL);
-
-			const windowDays =
-				parsePositiveInt(opts.windowDays ?? cfg?.sync?.windowDays, "--window-days") ?? 14;
-			const lookbackDays = parsePositiveInt(opts.lookbackDays, "--lookback-days") ?? 1;
-			const range = buildMirrorWindowRange({ lookbackDays, windowDays });
-
-			const { viewTemplate, eventTemplate } = await resolveOwaTemplates(cfg);
-			if (!viewTemplate) {
-				throw new UserError(
-					"Missing Outlook request template. Run 'discover-owa' or 'discover-owa-log --save-templates' and set outlook.owaRequestTemplate (or outlook.owaTemplatesPath)."
-				);
-			}
-
-			if (!eventTemplate) {
-				console.info("Note: event details template not found; attendee names may be missing.");
-			}
-
-			console.info("Fetching events from Outlook Web using request templates.");
-			const conn = await connectOverCdp({ engine, port: cdpPort, targetUrl });
-			try {
-				const pageUrl = typeof conn.page.url === "function" ? conn.page.url() : conn.page.url;
-				console.info(`Using tab: ${pageUrl}`);
-
-				const events = await fetchOwaEventsByTemplates({
-					page: conn.page,
-					viewTemplate,
-					eventTemplate,
-					range,
-					templateVars: cfg?.outlook?.owaTemplateVars,
-				});
-
-				if (opts.json) {
-					console.info(JSON.stringify(events, null, 2));
-					return;
-				}
-
-				console.info(`Extracted ${events.length} event(s).`);
-				for (const ev of events.slice(0, 15)) {
-					console.info(`- ${ev.subject} (${ev.start.dateTime ?? ev.start.date} → ${ev.end.dateTime ?? ev.end.date})`);
-				}
-				if (events.length > 15) console.info(`…and ${events.length - 15} more`);
-			} finally {
-				await disconnectBestEffort(conn.browser);
 			}
 		});
 
@@ -862,4 +492,7 @@ async function main() {
 	}
 }
 
-await main();
+const invokedPath = process.argv[1];
+if (invokedPath && import.meta.url === pathToFileURL(invokedPath).href) {
+	await main();
+}

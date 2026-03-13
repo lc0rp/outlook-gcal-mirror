@@ -11,7 +11,7 @@ describe("config", () => {
 		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ogm-config-"));
 		const filePath = path.join(dir, "config.json");
 		const cfg = {
-			outlook: { cdpPort: 9222, engine: "playwright", targetUrl: "https://example.com" },
+			outlook: { includeCalendars: ["Team"] },
 			google: { credentialsPath: "cred.json", tokenPath: "token.json", calendarName: "Outlook Mirror" },
 			sync: { windowDays: 14, markCancelled: false },
 		};

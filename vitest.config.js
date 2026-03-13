@@ -8,7 +8,6 @@ export default defineConfig({
 			include: ["src/**/*.js"],
 			exclude: [
 				"src/cli.js",
-				"src/keepalive/keepalive.js", // Main loop with signal handlers, tested manually
 				"src/google/client.js", // OAuth flow requires interactive browser
 			],
 		},

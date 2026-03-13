@@ -210,7 +210,7 @@ export async function getGoogleSyncContext({ credentialsPath, tokenPath, calenda
 }
 
 /**
- * @param {{ calendar: any, calendarId: string, ev: import("../owa/extract.js").NormalizedEvent }} opts
+ * @param {{ calendar: any, calendarId: string, ev: import("./normalized-event.js").NormalizedEvent }} opts
  */
 export async function upsertMirroredEvent({ calendar, calendarId, ev }) {
 	// Search existing by private extended prop within a narrow range around the event.
