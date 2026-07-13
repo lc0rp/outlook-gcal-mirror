@@ -1,6 +1,6 @@
 import { runCommand, runJsonCommand } from "../subprocess.js";
 
-export const DEFAULT_CLI365_WORKDIR = "/path/to/projects/cli-365";
+export const DEFAULT_CLI365_WORKDIR = process.env.OGM_CLI365_WORKDIR || undefined;
 
 function asString(value) {
 	if (typeof value === "string" && value.trim()) return value.trim();

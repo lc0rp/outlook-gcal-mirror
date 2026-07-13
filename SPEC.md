@@ -2,7 +2,7 @@
 
 ## Problem
 
-User’s Outlook calendar syncs to Google Calendar as **free/busy only**, so Granola (transcription app) cannot see correct meeting titles and attendee names. Granola cannot connect to Office 365 directly.
+Some Outlook calendar integrations sync to Google Calendar as **free/busy only**, so downstream tools cannot see correct meeting titles and attendee names.
 
 ## Goal
 
@@ -17,7 +17,7 @@ Monitor Outlook calendar events and mirror **real event details** into a dedicat
 - Google Calendar writes use OAuth.
 - Google CLI reads/writes for bidirectional sync go through `gog`.
 - **Do not email any attendee** (no invitations, no updates).
-- Runs on User’s **macOS desktop**.
+- Runs on a user-managed desktop or server.
 
 ## Decisions (Confirmed)
 

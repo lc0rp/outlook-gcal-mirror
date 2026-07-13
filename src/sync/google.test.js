@@ -26,6 +26,7 @@ describe("sync/google", () => {
 	};
 
 	beforeEach(() => {
+		vi.unstubAllEnvs();
 		vi.clearAllMocks();
 	});
 
@@ -114,6 +115,19 @@ describe("sync/google", () => {
 			const result = await upsertMirroredEvent({ calendar: mockCalendar, calendarId: "cal", ev });
 			expect(result.action).toBe("created");
 			expect(mockCalendar.events.insert).toHaveBeenCalled();
+			expect(mockCalendar.events.insert.mock.calls[0][0].requestBody.attendees).toEqual([]);
+		});
+
+		it("adds only the attendee configured through the environment", async () => {
+			vi.stubEnv("OGM_ATTENDEE_EMAIL", "owner@example.com");
+			mockCalendar.events.list.mockResolvedValue({ data: { items: [] } });
+			mockCalendar.events.insert.mockResolvedValue({});
+
+			await upsertMirroredEvent({ calendar: mockCalendar, calendarId: "cal", ev });
+
+			expect(mockCalendar.events.insert.mock.calls[0][0].requestBody.attendees).toEqual([
+				{ email: "owner@example.com" },
+			]);
 		});
 
 		it("updates existing event", async () => {

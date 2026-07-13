@@ -7,7 +7,10 @@ if [[ $# -eq 0 ]]; then
 fi
 
 load_keyring_password_from_env_file() {
-	local env_file="${OGM_ENV_FILE:-/home/user/.config/.env}"
+	local script_dir repo_root env_file
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	repo_root="$(cd "$script_dir/.." && pwd)"
+	env_file="${OGM_ENV_FILE:-$repo_root/.env}"
 	[[ -r "$env_file" ]] || return 1
 
 	local value
@@ -37,7 +40,7 @@ load_keyring_password_from_pass() {
 	command -v pass >/dev/null 2>&1 || return 1
 
 	local pass_output keyring_password
-	pass_output="$(pass show openclaw/gog_keyring_password 2>/dev/null)" || return 1
+	pass_output="$(pass show "${OGM_KEYRING_PASS_ENTRY:-gog/keyring-password}" 2>/dev/null)" || return 1
 	keyring_password="$(printf '%s\n' "$pass_output" | head -n1 | tr -d '\r')"
 	[[ -n "$keyring_password" ]] || return 1
 
@@ -47,7 +50,7 @@ load_keyring_password_from_pass() {
 
 if [[ -z "${GOG_KEYRING_PASSWORD:-}" ]]; then
 	if ! load_keyring_password_from_env_file && ! load_keyring_password_from_pass; then
-		echo "failed to load GOG_KEYRING_PASSWORD from /home/user/.config/.env or pass" >&2
+		echo "failed to load GOG_KEYRING_PASSWORD from OGM_ENV_FILE, repo .env, or pass" >&2
 		echo "set GOG_KEYRING_PASSWORD explicitly if needed" >&2
 		exit 1
 	fi

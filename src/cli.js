@@ -102,7 +102,7 @@ export function buildProgram() {
 	program
 		.name("outlook-gcal-mirror")
 		.description("Mirror Outlook calendar details into a dedicated Google Calendar")
-		.option("--config <path>", "Config path", DEFAULT_CONFIG_PATH)
+		.option("--config <path>", "Config path", process.env.OGM_CONFIG || DEFAULT_CONFIG_PATH)
 		.showHelpAfterError(true);
 
 	program
@@ -117,8 +117,8 @@ export function buildProgram() {
 		.action(async (opts) => {
 			const cfgPath = program.opts().config;
 
-			const credentialsPath = normalizePath(opts.googleCredentials);
-			const tokenPath = normalizePath(opts.googleToken) ?? DEFAULT_TOKEN_PATH;
+			const credentialsPath = normalizePath(opts.googleCredentials ?? process.env.OGM_GOOGLE_CREDS);
+			const tokenPath = normalizePath(opts.googleToken ?? process.env.OGM_GOOGLE_TOKEN) ?? DEFAULT_TOKEN_PATH;
 			const calendarRef = String(opts.calendar ?? opts.calendarName ?? "Outlook Mirror");
 			const windowDays = parsePositiveInt(opts.windowDays, "--window-days") ?? 14;
 
@@ -146,6 +146,7 @@ export function buildProgram() {
 		.command("sync")
 		.description("Read events from Outlook via cli-365 and mirror them to Google Calendar")
 		.option("--cli365-bin <path>", "cli-365 binary on PATH", "cli-365")
+		.option("--cli365-workdir <path>", "Working directory when running cli-365 from source")
 		.option("--cli365-config <path>", "cli-365 config path")
 		.option("--cli365-cdp-port <port>", "cli-365 CDP port")
 		.option("--cli365-folder <id>", "cli-365 calendar folder id")
@@ -175,8 +176,8 @@ export function buildProgram() {
 			const lookbackDays = parsePositiveInt(opts.lookbackDays, "--lookback-days") ?? 1;
 			const range = buildMirrorWindowRange({ lookbackDays, windowDays });
 
-			const credentialsPath = normalizePath(opts.googleCredentials ?? cfg?.google?.credentialsPath) ?? null;
-			const tokenPath = normalizePath(opts.googleToken ?? cfg?.google?.tokenPath) ?? DEFAULT_TOKEN_PATH;
+			const credentialsPath = normalizePath(opts.googleCredentials ?? process.env.OGM_GOOGLE_CREDS ?? cfg?.google?.credentialsPath) ?? null;
+			const tokenPath = normalizePath(opts.googleToken ?? process.env.OGM_GOOGLE_TOKEN ?? cfg?.google?.tokenPath) ?? DEFAULT_TOKEN_PATH;
 			const calendarRef = String(
 				opts.calendar ?? opts.calendarName ?? cfg?.google?.calendarId ?? cfg?.google?.calendarName ?? "Outlook Mirror"
 			);
@@ -206,6 +207,7 @@ export function buildProgram() {
 			console.info("Fetching events from Outlook via cli-365.");
 			const outlookClient = createCli365Client({
 				command: cli365Bin,
+				workdir: normalizePath(opts.cli365Workdir ?? process.env.OGM_CLI365_WORKDIR) ?? undefined,
 				configPath: cli365ConfigPath ?? undefined,
 				cdpPort: cli365CdpPort,
 				ensureCdp: cli365EnsureCdp,

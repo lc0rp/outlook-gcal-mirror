@@ -50,6 +50,15 @@ Notes:
 
 ### 2) Create a config file (one-time)
 
+Keep OAuth paths and optional account-specific behavior in an ignored `.env` file:
+
+```bash
+cp .env.example .env
+set -a
+source .env
+set +a
+```
+
 ```bash
 node src/cli.js setup \
   --google-credentials /path/to/client_secret.json \
@@ -82,7 +91,7 @@ scripts/with-gog-keyring.sh node src/cli.js sync \
 
 Notes:
 
-- `scripts/with-gog-keyring.sh` auto-exports `GOG_KEYRING_PASSWORD` from `/home/user/.config/.env` (fallback: `pass show openclaw/gog_keyring_password`) if not already set; mainly needed for `sync-bidir`/`gog`.
+- `scripts/with-gog-keyring.sh` loads `GOG_KEYRING_PASSWORD` from `OGM_ENV_FILE`, the repository `.env`, or the configurable `OGM_KEYRING_PASS_ENTRY` password-store entry.
 - `sync` reads Outlook events via `cli-365` only.
 - `--calendar` accepts a calendar id or name; id match is attempted first. If the calendar doesn’t exist, it will be created.
 - `--lookback-days` (default: 1) includes recently-started events.
@@ -185,7 +194,8 @@ node src/cli.js clear \
 
 This tool **does not invite Outlook attendees** to Google events. Attendee names are written to the event description only.
 
-It **always adds `owner@example.com` as a single attendee** on mirrored events, but uses Google Calendar API options (`sendUpdates: "none"`) to suppress any notifications.
+Set `OGM_ATTENDEE_EMAIL` only when the mirror owner should be added as a single
+attendee. It is blank by default. Google writes use `sendUpdates: "none"`.
 
 ## Scheduling
 

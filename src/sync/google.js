@@ -5,8 +5,6 @@ import { cancelledSummary, buildGoogleDescription } from "./format.js";
 export const PRIVATE_SOURCE_KEY = "ogm.sourceKey";
 export const PRIVATE_STATUS = "ogm.status";
 
-const ALWAYS_ATTENDEE = "owner@example.com";
-
 /**
  * @param {unknown} attendees
  */
@@ -41,10 +39,12 @@ function normalizeAttendees(attendees) {
 /**
  * @param {unknown} attendees
  */
-function withAlwaysAttendee(attendees) {
+function withConfiguredAttendee(attendees) {
 	const { out, seen } = normalizeAttendees(attendees);
-	const key = ALWAYS_ATTENDEE.toLowerCase();
-	if (!seen.has(key)) out.push({ email: ALWAYS_ATTENDEE });
+	const configuredEmail = String(process.env.OGM_ATTENDEE_EMAIL || "").trim();
+	if (!configuredEmail) return out;
+	const key = configuredEmail.toLowerCase();
+	if (!seen.has(key)) out.push({ email: configuredEmail });
 	return out;
 }
 
@@ -246,7 +246,7 @@ export async function upsertMirroredEvent({ calendar, calendarId, ev }) {
 	}
 
 	const description = buildGoogleDescription(ev);
-	const attendees = withAlwaysAttendee(existing?.attendees ?? []);
+	const attendees = withConfiguredAttendee(existing?.attendees ?? []);
 
 	const requestBody = {
 		summary: ev.subject,
