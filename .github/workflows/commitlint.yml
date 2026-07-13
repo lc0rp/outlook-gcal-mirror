@@ -23,7 +23,7 @@ jobs:
       - name: setup-node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.14.0
           cache: pnpm
 
       - name: install
@@ -32,8 +32,13 @@ jobs:
       - name: set-range (push)
         if: github.event_name == 'push'
         run: |
-          echo "FROM=${{ github.event.before }}" >> $GITHUB_ENV
-          echo "TO=${{ github.sha }}" >> $GITHUB_ENV
+          from="${{ github.event.before }}"
+          to="${{ github.sha }}"
+          if [[ "$from" =~ ^0+$ ]]; then
+            from=$(git rev-parse "$to^" 2>/dev/null || true)
+          fi
+          echo "FROM=$from" >> "$GITHUB_ENV"
+          echo "TO=$to" >> "$GITHUB_ENV"
 
       - name: set-range (pr)
         if: github.event_name == 'pull_request'
@@ -42,4 +47,9 @@ jobs:
           echo "TO=${{ github.event.pull_request.head.sha }}" >> $GITHUB_ENV
 
       - name: commitlint
-        run: pnpm commitlint --from "$FROM" --to "$TO" --verbose
+        run: |
+          if [[ -n "$FROM" ]]; then
+            pnpm commitlint --from "$FROM" --to "$TO" --verbose
+          else
+            git log -1 --format=%B "$TO" | pnpm commitlint --verbose
+          fi
